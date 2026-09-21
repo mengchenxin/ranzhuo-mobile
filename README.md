@@ -102,7 +102,7 @@ npm run cap:open
 5. 根据需要设置 `RANZHUO_RATE_LIMIT_PER_10_MIN`，默认每个 IP 十分钟 30 次模型请求。
 6. 部署完成后使用 Render 提供的 HTTPS 地址访问。
 
-公开简历 Demo 推荐设置 `RANZHUO_REQUIRE_CLIENT_KEY=true`，此时每位访问者必须填写自己的 DeepSeek Key，Key 只保存在访问者浏览器中。`render.yaml` 已默认启用这一模式。
+公开简历 Demo 推荐设置 `RANZHUO_REQUIRE_CLIENT_KEY=true`。生产环境未配置服务端模型 Key 时，系统会自动启用该模式：每位访问者必须填写自己的 DeepSeek Key，Key 只保存在访问者浏览器中。
 
 生产环境设置 `DEEPSEEK_API_KEY` 后，Gateway 会自动启用 DeepSeek，无需在浏览器重复填写密钥。
 

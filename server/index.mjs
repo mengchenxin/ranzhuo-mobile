@@ -50,7 +50,11 @@ const rateLimitPerTenMinutes = Math.max(
 );
 const rateBuckets = new Map();
 const requireClientKey =
-  process.env.RANZHUO_REQUIRE_CLIENT_KEY === "true";
+  process.env.RANZHUO_REQUIRE_CLIENT_KEY === "true" ||
+  (process.env.RANZHUO_REQUIRE_CLIENT_KEY !== "false" &&
+    process.env.NODE_ENV === "production" &&
+    !process.env.DEEPSEEK_API_KEY &&
+    !process.env.OPENAI_API_KEY);
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
