@@ -49,6 +49,8 @@ const rateLimitPerTenMinutes = Math.max(
   Number(process.env.RANZHUO_RATE_LIMIT_PER_10_MIN || 30),
 );
 const rateBuckets = new Map();
+const requireClientKey =
+  process.env.RANZHUO_REQUIRE_CLIENT_KEY === "true";
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -189,14 +191,17 @@ async function readBody(request) {
 
 async function providerFromRequest(body, request) {
   const stored = await getProviderConfig();
+  const clientKey = body.apiKey || request.headers["x-provider-key"] || "";
+  if (requireClientKey && !clientKey) {
+    const error = new Error("当前站点要求访问者填写自己的 API Key");
+    error.status = 400;
+    throw error;
+  }
+
   return resolveProvider({
     ...stored,
     ...body,
-    apiKey:
-      body.apiKey ||
-      request.headers["x-provider-key"] ||
-      stored.apiKey ||
-      "",
+    apiKey: clientKey || stored.apiKey || "",
   });
 }
 
@@ -297,12 +302,24 @@ async function route(request, response) {
 
   if (request.method === "GET" && pathname === "/api/config/provider") {
     sendJson(response, 200, {
-      config: maskProviderConfig(await getProviderConfig()),
+      config: {
+        ...maskProviderConfig(await getProviderConfig()),
+        clientKeyRequired: requireClientKey,
+        serverKeyManaged: Boolean(
+          process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY,
+        ),
+      },
     });
     return;
   }
 
   if (request.method === "POST" && pathname === "/api/config/provider") {
+    if (requireClientKey) {
+      sendJson(response, 403, {
+        error: "当前部署使用访客自带 Key，服务端不会保存密钥",
+      });
+      return;
+    }
     const body = await readBody(request);
     const saved = await setProviderConfig(body);
     sendJson(response, 200, {
@@ -566,7 +583,7 @@ async function route(request, response) {
 
 const server = http.createServer((request, response) => {
   route(request, response).catch((error) => {
-    sendJson(response, 500, { error: error.message });
+    sendJson(response, error.status || 500, { error: error.message });
   });
 });
 

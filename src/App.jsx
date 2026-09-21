@@ -172,7 +172,12 @@ function App() {
       try {
         const result = await getGatewayProviderConfig(settings.api.gatewayUrl);
         const stored = result.config || {};
-        if (!active || !stored.configured) return;
+        if (
+          !active ||
+          (!stored.serverKeyManaged && (!stored.configured || stored.clientKeyRequired))
+        ) {
+          return;
+        }
         setSettings((current) => ({
           ...current,
           api: {
@@ -2358,6 +2363,8 @@ function SettingsSheet({ settings, onClose, onSave }) {
   const [showKey, setShowKey] = useState(false);
   const [connectionTest, setConnectionTest] = useState(null);
   const [keyStored, setKeyStored] = useState(false);
+  const [clientKeyRequired, setClientKeyRequired] = useState(false);
+  const [serverKeyManaged, setServerKeyManaged] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -2430,6 +2437,11 @@ function SettingsSheet({ settings, onClose, onSave }) {
         const result = await getGatewayProviderConfig(draft.api.gatewayUrl);
         if (!active) return;
         const config = result.config || {};
+        setClientKeyRequired(Boolean(config.clientKeyRequired));
+        setServerKeyManaged(Boolean(config.serverKeyManaged));
+        if (config.clientKeyRequired && !config.serverKeyManaged) {
+          return;
+        }
         setDraft((current) => ({
           ...current,
           api: {
@@ -2453,7 +2465,10 @@ function SettingsSheet({ settings, onClose, onSave }) {
 
   const saveSettings = async () => {
     setSaveError("");
-    if (draft.api.transport !== "gateway") {
+    if (
+      draft.api.transport !== "gateway" ||
+      (clientKeyRequired && !serverKeyManaged)
+    ) {
       onSave(draft);
       return;
     }
@@ -2582,6 +2597,8 @@ function SettingsSheet({ settings, onClose, onSave }) {
               placeholder={
                 keyStored
                   ? "密钥已保存，留空表示不修改"
+                  : clientKeyRequired
+                    ? "请填写你自己的 API Key"
                   : draft.api.provider === "ollama"
                     ? "本地模型可填 ollama"
                     : "sk-..."
@@ -2654,7 +2671,9 @@ function SettingsSheet({ settings, onClose, onSave }) {
         <ShieldCheck size={18} />
         <p>
           {draft.api.transport === "gateway"
-            ? keyStored
+            ? clientKeyRequired && !serverKeyManaged
+              ? "当前公开站点使用访客自带 Key。密钥只保存在你的浏览器中，不会上传到服务器。"
+              : keyStored
               ? "模型密钥已持久化到本地 Gateway，服务重启和浏览器更换后仍可继续使用。"
               : "Gateway 在电脑本机代理模型请求，保存后密钥只写入本机配置，可跨浏览器复用。"
             : "直连模式由浏览器直接请求服务商，可能受 CORS 限制。"}

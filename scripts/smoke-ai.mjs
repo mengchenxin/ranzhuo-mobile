@@ -46,13 +46,14 @@ const mockProvider = http.createServer((request, response) => {
 });
 mockProvider.listen(8801, "127.0.0.1");
 
-function startGateway() {
+function startGateway(extraEnv = {}) {
   return spawn(process.execPath, ["server/index.mjs"], {
     cwd: root,
     env: {
       ...process.env,
       RANZHUO_GATEWAY_PORT: String(port),
       RANZHUO_DATA_DIR: dataDir,
+      ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -198,6 +199,41 @@ try {
     throw new Error("Provider config did not survive a Gateway restart");
   }
 
+  child.kill();
+  await new Promise((resolve) => setTimeout(resolve, 180));
+  child = startGateway({ RANZHUO_REQUIRE_CLIENT_KEY: "true" });
+  await waitForHealth();
+
+  const missingKeyResponse = await fetch(baseUrl + "/api/chat/stream", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      provider: "deepseek",
+      model: "deepseek-flash",
+      messages: [{ role: "user", content: "hello" }],
+    }),
+  });
+  if (missingKeyResponse.status !== 400) {
+    throw new Error("Client-key mode did not reject a missing API key");
+  }
+
+  const blockedConfigResponse = await fetch(baseUrl + "/api/config/provider", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      provider: "deepseek",
+      model: "deepseek-flash",
+      apiKey: "must-not-be-saved",
+    }),
+  });
+  if (blockedConfigResponse.status !== 403) {
+    throw new Error("Client-key mode allowed saving a visitor key on the server");
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -210,6 +246,7 @@ try {
         p95LatencyMs: metrics.p95LatencyMs,
         retryAttempts: providerTest.attempts,
         providerConfigPersisted: true,
+        clientKeyEnforced: true,
       },
       null,
       2,

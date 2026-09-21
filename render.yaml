@@ -13,3 +13,5 @@ services:
         sync: false
       - key: RANZHUO_RATE_LIMIT_PER_10_MIN
         value: "30"
+      - key: RANZHUO_REQUIRE_CLIENT_KEY
+        value: "true"
