@@ -1,0 +1,8 @@
+{
+  "appId": "com.ranzhuo.mobile",
+  "appName": "染酌 小手机",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

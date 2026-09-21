@@ -1,0 +1,11 @@
+node_modules
+dist
+.npm-cache
+.git
+.github
+android
+outputs
+server/data
+server/test-data
+server/evaluation-data
+*.log
