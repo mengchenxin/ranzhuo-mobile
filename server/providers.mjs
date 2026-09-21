@@ -1,7 +1,7 @@
 const providerDefaults = {
   deepseek: {
     baseUrl: "https://api.deepseek.com/v1",
-    model: "deepseek-chat",
+    model: "deepseek-flash",
     apiKeyEnv: "DEEPSEEK_API_KEY",
   },
   openai: {

@@ -87,7 +87,7 @@ export async function getProviderConfig() {
     ? {
         provider: "deepseek",
         baseUrl: "https://api.deepseek.com/v1",
-        model: "deepseek-chat",
+        model: "deepseek-flash",
         apiKey: process.env.DEEPSEEK_API_KEY,
       }
     : process.env.OPENAI_API_KEY
@@ -108,7 +108,7 @@ export async function getProviderConfig() {
     transport: "gateway",
     provider: environmentProvider?.provider || "deepseek",
     baseUrl: environmentProvider?.baseUrl || "https://api.deepseek.com/v1",
-    model: environmentProvider?.model || "deepseek-chat",
+    model: environmentProvider?.model || "deepseek-flash",
     temperature: 0.85,
     apiKey: environmentProvider?.apiKey || "",
   });

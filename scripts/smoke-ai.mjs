@@ -168,7 +168,7 @@ try {
       transport: "gateway",
       provider: "deepseek",
       baseUrl: "https://api.deepseek.com/v1",
-      model: "deepseek-chat",
+      model: "deepseek-flash",
       temperature: 0.8,
       apiKey: "persistence-test-key",
     }),
@@ -193,7 +193,7 @@ try {
   );
   if (
     !persistedConfig.config?.apiKeyConfigured ||
-    persistedConfig.config.model !== "deepseek-chat"
+    persistedConfig.config.model !== "deepseek-flash"
   ) {
     throw new Error("Provider config did not survive a Gateway restart");
   }

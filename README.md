@@ -48,7 +48,7 @@ Web 默认地址为 `http://localhost:5173`，Gateway 默认地址为 `http://12
 
 - Gateway 地址：`http://127.0.0.1:8787`
 - 供应商：DeepSeek
-- 模型：`deepseek-chat` 或 `deepseek-reasoner`
+- 模型：`deepseek-flash`，需要更强推理时可改用 `deepseek-v4-pro`
 - API 密钥：你的 DeepSeek Key
 
 也可以先设置环境变量，再由 Gateway 读取：

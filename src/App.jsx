@@ -96,7 +96,7 @@ const defaultSettings = {
     gatewayUrl: runtimeGatewayUrl,
     baseUrl: "https://api.deepseek.com/v1",
     apiKey: "",
-    model: "deepseek-chat",
+    model: "deepseek-flash",
     temperature: 0.85,
   },
   voice: {
@@ -1660,7 +1660,7 @@ function AILabSheet({ settings, characters, onClose, notify }) {
     provider: api.provider || "deepseek",
     baseUrl: api.baseUrl || "",
     apiKey: api.apiKey || "",
-    model: api.model || "deepseek-chat",
+    model: api.model || "deepseek-flash",
     temperature: api.temperature,
   };
   const selectedAgentCharacter =
@@ -2374,7 +2374,7 @@ function SettingsSheet({ settings, onClose, onSave }) {
       id: "deepseek",
       label: "DeepSeek",
       baseUrl: "https://api.deepseek.com/v1",
-      model: "deepseek-chat",
+      model: "deepseek-flash",
     },
     {
       id: "openai",

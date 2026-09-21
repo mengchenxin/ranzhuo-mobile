@@ -44,7 +44,7 @@ try {
     },
     body: JSON.stringify({
       provider: "deepseek",
-      model: process.env.RANZHUO_EVAL_MODEL || "deepseek-chat",
+      model: process.env.RANZHUO_EVAL_MODEL || "deepseek-flash",
       includeLive,
     }),
   });
