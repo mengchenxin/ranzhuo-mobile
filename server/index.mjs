@@ -44,6 +44,11 @@ const configuredOrigins = String(process.env.RANZHUO_ALLOWED_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
+const rateLimitPerTenMinutes = Math.max(
+  1,
+  Number(process.env.RANZHUO_RATE_LIMIT_PER_10_MIN || 30),
+);
+const rateBuckets = new Map();
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -130,6 +135,34 @@ function sendJson(response, status, payload) {
     "Cache-Control": "no-store",
   });
   response.end(JSON.stringify(payload));
+}
+
+function consumeRateLimit(request, response, limit = rateLimitPerTenMinutes) {
+  const forwarded = String(request.headers["x-forwarded-for"] || "")
+    .split(",")[0]
+    .trim();
+  const clientId = forwarded || request.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  const windowMs = 10 * 60 * 1000;
+  const current = rateBuckets.get(clientId);
+
+  if (!current || now - current.startedAt >= windowMs) {
+    rateBuckets.set(clientId, { startedAt: now, count: 1 });
+    return true;
+  }
+
+  if (current.count >= limit) {
+    const retryAfter = Math.ceil((windowMs - (now - current.startedAt)) / 1000);
+    response.setHeader("Retry-After", String(retryAfter));
+    sendJson(response, 429, {
+      error: "请求过于频繁，请稍后再试",
+      retryAfter,
+    });
+    return false;
+  }
+
+  current.count += 1;
+  return true;
 }
 
 function percentile(values, ratio) {
@@ -328,6 +361,15 @@ async function route(request, response) {
   }
 
   if (request.method === "POST" && pathname === "/api/evaluations/run") {
+    if (
+      !consumeRateLimit(
+        request,
+        response,
+        Math.max(3, Math.floor(rateLimitPerTenMinutes / 5)),
+      )
+    ) {
+      return;
+    }
     const body = await readBody(request);
     const providerConfig = await providerFromRequest(body, request);
     const startedAt = Date.now();
@@ -353,6 +395,15 @@ async function route(request, response) {
   }
 
   if (request.method === "POST" && pathname === "/api/providers/test") {
+    if (
+      !consumeRateLimit(
+        request,
+        response,
+        Math.max(5, Math.floor(rateLimitPerTenMinutes / 2)),
+      )
+    ) {
+      return;
+    }
     const body = await readBody(request);
     const providerConfig = await providerFromRequest(body, request);
     try {
@@ -381,11 +432,21 @@ async function route(request, response) {
   }
 
   if (request.method === "POST" && pathname === "/api/chat/stream") {
+    if (!consumeRateLimit(request, response)) return;
     await handleChat(request, response, await readBody(request));
     return;
   }
 
   if (request.method === "POST" && pathname === "/api/agent/run") {
+    if (
+      !consumeRateLimit(
+        request,
+        response,
+        Math.max(5, Math.floor(rateLimitPerTenMinutes / 2)),
+      )
+    ) {
+      return;
+    }
     const body = await readBody(request);
     const providerConfig = await providerFromRequest(body, request);
     const startedAt = Date.now();
@@ -421,6 +482,15 @@ async function route(request, response) {
   }
 
   if (request.method === "POST" && pathname === "/api/memory/extract") {
+    if (
+      !consumeRateLimit(
+        request,
+        response,
+        Math.max(5, Math.floor(rateLimitPerTenMinutes / 2)),
+      )
+    ) {
+      return;
+    }
     const body = await readBody(request);
     const providerConfig = await providerFromRequest(body, request);
     try {

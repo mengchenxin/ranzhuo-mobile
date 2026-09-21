@@ -99,7 +99,8 @@ npm run cap:open
 2. 在 Render 中选择 `New Web Service`。
 3. 连接 GitHub 仓库，Render 会读取 `render.yaml`。
 4. 在环境变量中添加 `DEEPSEEK_API_KEY`。
-5. 部署完成后使用 Render 提供的 HTTPS 地址访问。
+5. 根据需要设置 `RANZHUO_RATE_LIMIT_PER_10_MIN`，默认每个 IP 十分钟 30 次模型请求。
+6. 部署完成后使用 Render 提供的 HTTPS 地址访问。
 
 生产环境设置 `DEEPSEEK_API_KEY` 后，Gateway 会自动启用 DeepSeek，无需在浏览器重复填写密钥。
 
