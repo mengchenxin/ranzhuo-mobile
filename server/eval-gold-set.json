@@ -1,0 +1,144 @@
+{
+  "documents": [
+    {
+      "id": "architecture",
+      "title": "染酌系统架构",
+      "content": "染酌小手机通过本地 AI Gateway 统一接入 DeepSeek、OpenAI、Ollama 和兼容 OpenAI 的模型服务。前端使用 React、Vite 和 Capacitor，Gateway 使用 Node.js，并通过 SSE 返回流式内容。"
+    },
+    {
+      "id": "jiang-yu",
+      "title": "江屿角色档案",
+      "content": "江屿二十八岁，在海边经营旧书店。他性格温柔、慢热，喜欢雨声、黑胶唱片和凌晨的便利店。他不喜欢用命令式语气催促别人，会认真记住用户说过的小事。"
+    },
+    {
+      "id": "lin-wu",
+      "title": "林雾角色档案",
+      "content": "林雾是夜班电台主播，擅长用幽默的方式回应用户。她和用户约定每周五互相分享一首最近循环的歌曲，常常在深夜在线。"
+    },
+    {
+      "id": "chen-mian",
+      "title": "陈眠角色档案",
+      "content": "陈眠是一名临床心理师，沟通理性、边界清晰。她不会轻易给用户下结论，更愿意陪伴用户把情绪和事实逐步看清楚。她记得用户答应早点结束工作。"
+    },
+    {
+      "id": "north-radio",
+      "title": "北岸电台群聊",
+      "content": "北岸电台是包含阿澈、林雾等五位角色的夜间群聊，群成员会分享音乐、电影和生活琐事。群成员记得用户曾经推荐过一张爵士专辑。"
+    },
+    {
+      "id": "shen-lu",
+      "title": "沈鹿角色档案",
+      "content": "沈鹿是一名旅行摄影师，喜欢用照片记录天气、城市和路上遇见的人。她答应路过海边时替用户看一场日落。"
+    },
+    {
+      "id": "memory",
+      "title": "长期记忆机制",
+      "content": "长期记忆由模型提取候选事实，经过用户确认、去重和置信度过滤后写入。回答前系统根据当前问题估算记忆相关性，只注入当前需要的记忆，避免上下文无限增长。"
+    },
+    {
+      "id": "rag",
+      "title": "RAG 检索流程",
+      "content": "RAG 流程包含文档重叠切块、Embedding、BM25 关键词检索、向量相似度检索、混合打分、重排序和来源引用。检索结果包含标题、知识块编号、混合分数和重排分数。"
+    },
+    {
+      "id": "models",
+      "title": "DeepSeek 模型接入",
+      "content": "DeepSeek 当前官方模型名为 deepseek-flash 和 deepseek-v4-pro。日常角色聊天优先使用 deepseek-flash 控制成本，复杂推理再使用 deepseek-v4-pro。"
+    },
+    {
+      "id": "cross-platform",
+      "title": "跨端使用",
+      "content": "染酌支持桌面浏览器、手机浏览器和 Capacitor Android。线上 Render 部署使用访客自带 Key 模式，访问者的 API Key 只保存在自己的浏览器中。"
+    }
+  ],
+  "retrievalCases": [
+    {
+      "id": "rag.architecture",
+      "query": "项目支持哪些模型服务？",
+      "expectedTitle": "染酌系统架构",
+      "keywords": ["DeepSeek", "OpenAI", "Ollama"]
+    },
+    {
+      "id": "rag.streaming",
+      "query": "聊天内容如何流式返回？",
+      "expectedTitle": "染酌系统架构",
+      "keywords": ["SSE", "流式"]
+    },
+    {
+      "id": "rag.jiang-yu",
+      "query": "江屿喜欢什么？",
+      "expectedTitle": "江屿角色档案",
+      "keywords": ["旧书店", "黑胶"]
+    },
+    {
+      "id": "rag.lin-wu",
+      "query": "每周五和林雾有什么约定？",
+      "expectedTitle": "林雾角色档案",
+      "keywords": ["周五", "歌曲"]
+    },
+    {
+      "id": "rag.chen-mian",
+      "query": "陈眠是什么职业？",
+      "expectedTitle": "陈眠角色档案",
+      "keywords": ["心理师"]
+    },
+    {
+      "id": "rag.group",
+      "query": "北岸电台有哪些共同记忆？",
+      "expectedTitle": "北岸电台群聊",
+      "keywords": ["爵士", "音乐"]
+    },
+    {
+      "id": "rag.shen-lu",
+      "query": "沈鹿答应替用户做什么？",
+      "expectedTitle": "沈鹿角色档案",
+      "keywords": ["日落", "海边"]
+    },
+    {
+      "id": "rag.memory",
+      "query": "长期记忆怎么避免上下文无限增长？",
+      "expectedTitle": "长期记忆机制",
+      "keywords": ["相关性", "去重"]
+    },
+    {
+      "id": "rag.hybrid",
+      "query": "RAG 为什么需要重排序？",
+      "expectedTitle": "RAG 检索流程",
+      "keywords": ["BM25", "向量", "重排序"]
+    },
+    {
+      "id": "rag.models",
+      "query": "控制成本应该选择哪个 DeepSeek 模型？",
+      "expectedTitle": "DeepSeek 模型接入",
+      "keywords": ["deepseek-flash"]
+    },
+    {
+      "id": "rag.mobile-key",
+      "query": "线上手机使用会把 Key 上传到服务器吗？",
+      "expectedTitle": "跨端使用",
+      "keywords": ["浏览器", "Key"]
+    },
+    {
+      "id": "rag.chunking",
+      "query": "文档进入知识库前会经过哪些步骤？",
+      "expectedTitle": "RAG 检索流程",
+      "keywords": ["切块", "Embedding"]
+    }
+  ],
+  "liveCases": [
+    {
+      "id": "live.deepseek.reply",
+      "prompt": "只回复：AI_EVAL_OK"
+    },
+    {
+      "id": "live.agent.calculate",
+      "goal": "使用工具计算 19 * 23，然后给出结果。",
+      "expectedTool": "calculate"
+    },
+    {
+      "id": "live.agent.knowledge",
+      "goal": "检索知识库，说明染酌支持哪些模型。",
+      "expectedTool": "search_knowledge"
+    }
+  ]
+}

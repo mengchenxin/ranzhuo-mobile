@@ -15,3 +15,9 @@ services:
         value: "30"
       - key: RANZHUO_REQUIRE_CLIENT_KEY
         value: "true"
+      - key: RANZHUO_EMBEDDING_BASE_URL
+        sync: false
+      - key: RANZHUO_EMBEDDING_API_KEY
+        sync: false
+      - key: RANZHUO_EMBEDDING_MODEL
+        sync: false

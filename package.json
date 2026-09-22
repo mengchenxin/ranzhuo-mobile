@@ -17,7 +17,8 @@
     "test:gateway": "node scripts/smoke-ai.mjs",
     "eval:ai": "node scripts/eval-ai.mjs",
     "eval:ai:live": "node scripts/eval-ai.mjs --live",
-    "test:all": "npm run test:gateway && npm run eval:ai && npm run build"
+    "test:memory": "node scripts/memory-eval.mjs",
+    "test:all": "npm run test:gateway && npm run test:memory && npm run eval:ai && npm run build"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

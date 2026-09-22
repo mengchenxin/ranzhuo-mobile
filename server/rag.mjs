@@ -1,54 +1,13 @@
 import crypto from "node:crypto";
-import { readStore, updateStore } from "./store.mjs";
+import {
+  getChunks,
+  getDocuments,
+  insertDocument,
+  removeDocument,
+} from "./database.mjs";
+import { embedTexts, tokenize } from "./embeddings.mjs";
 
-const dimensions = 384;
-
-function tokenize(text) {
-  const normalized = String(text || "").toLowerCase();
-  const units =
-    normalized.match(/[a-z0-9_]+|[\u3400-\u9fff]/g)?.map(String) || [];
-  const tokens = [...units];
-
-  for (let index = 0; index < units.length - 1; index += 1) {
-    const left = units[index];
-    const right = units[index + 1];
-    const isCjkPair =
-      /[\u3400-\u9fff]/.test(left) && /[\u3400-\u9fff]/.test(right);
-    if (isCjkPair) tokens.push(left + right);
-  }
-
-  return tokens;
-}
-
-function hashToken(token) {
-  const digest = crypto.createHash("sha1").update(token).digest();
-  return digest.readUInt32BE(0) % dimensions;
-}
-
-export function embedText(text) {
-  const vector = new Float32Array(dimensions);
-  const tokens = tokenize(text);
-
-  for (const token of tokens) {
-    const index = hashToken(token);
-    vector[index] += token.length > 1 ? 1.4 : 1;
-  }
-
-  let magnitude = 0;
-  for (const value of vector) magnitude += value * value;
-  magnitude = Math.sqrt(magnitude) || 1;
-  return Array.from(vector, (value) => value / magnitude);
-}
-
-function cosineSimilarity(left, right) {
-  let score = 0;
-  for (let index = 0; index < dimensions; index += 1) {
-    score += left[index] * right[index];
-  }
-  return score;
-}
-
-function splitText(text, size = 360, overlap = 72) {
+function splitText(text, size = 420, overlap = 84) {
   const normalized = String(text || "").replace(/\r\n/g, "\n").trim();
   if (!normalized) return [];
 
@@ -69,14 +28,16 @@ export async function ingestDocument({
   characterId = "shared",
   source = "manual",
 }) {
-  const chunks = splitText(text).map((content, index) => ({
+  const contentChunks = splitText(text);
+  if (!contentChunks.length) throw new Error("文档内容不能为空");
+
+  const embeddingResult = await embedTexts(contentChunks);
+  const chunks = contentChunks.map((content, index) => ({
     id: crypto.randomUUID(),
     index,
     content,
-    embedding: embedText(content),
+    embedding: embeddingResult.vectors[index],
   }));
-
-  if (!chunks.length) throw new Error("文档内容不能为空");
 
   const document = {
     id: crypto.randomUUID(),
@@ -84,15 +45,13 @@ export async function ingestDocument({
     characterId,
     source,
     textLength: String(text).length,
+    embeddingProvider: embeddingResult.provider,
+    embeddingModel: embeddingResult.model,
     chunks,
     createdAt: new Date().toISOString(),
   };
 
-  await updateStore("rag", [], (documents) => {
-    documents.unshift(document);
-    return documents.slice(0, 100);
-  });
-
+  await insertDocument(document);
   return {
     ...document,
     chunks: chunks.length,
@@ -100,58 +59,177 @@ export async function ingestDocument({
 }
 
 export async function listDocuments() {
-  const documents = await readStore("rag", []);
-  return documents.map((document) => ({
-    id: document.id,
-    title: document.title,
-    characterId: document.characterId,
-    source: document.source,
-    textLength: document.textLength,
-    chunks: document.chunks.length,
-    createdAt: document.createdAt,
-  }));
+  return getDocuments();
 }
 
 export async function deleteDocument(documentId) {
-  let deleted = false;
-  await updateStore("rag", [], (documents) => {
-    const next = documents.filter((document) => document.id !== documentId);
-    deleted = next.length !== documents.length;
-    return deleted ? next : documents;
-  });
-  return deleted;
+  return removeDocument(documentId);
 }
 
-export async function searchKnowledge(query, options = {}) {
-  const queryVector = embedText(query);
-  const limit = Math.max(1, Math.min(12, Number(options.limit) || 5));
-  const documents = await readStore("rag", []);
-  const results = [];
+function cosineSimilarity(left, right) {
+  const length = Math.min(left.length, right.length);
+  let score = 0;
+  for (let index = 0; index < length; index += 1) {
+    score += left[index] * right[index];
+  }
+  return score;
+}
 
-  for (const document of documents) {
-    if (
-      options.characterId &&
-      options.characterId !== "shared" &&
-      document.characterId !== options.characterId &&
-      document.characterId !== "shared"
-    ) {
-      continue;
-    }
+function normalizeScores(items, key) {
+  const values = items.map((item) => item.scores[key]);
+  const minimum = Math.min(...values, 0);
+  const maximum = Math.max(...values, 1);
+  return items.map((item) => ({
+    ...item,
+    scores: {
+      ...item.scores,
+      [key]: (item.scores[key] - minimum) / (maximum - minimum || 1),
+    },
+  }));
+}
 
-    for (const chunk of document.chunks) {
-      results.push({
-        documentId: document.id,
-        title: document.title,
-        characterId: document.characterId,
-        chunkId: chunk.id,
-        chunkIndex: chunk.index,
-        content: chunk.content,
-        score: cosineSimilarity(queryVector, chunk.embedding),
-      });
+function bm25Scores(query, chunks) {
+  const queryTokens = [...new Set(tokenize(query))];
+  const documents = chunks.map((chunk) => tokenize(chunk.content));
+  const averageLength =
+    documents.reduce((total, tokens) => total + tokens.length, 0) /
+    Math.max(1, documents.length);
+  const documentFrequency = new Map();
+
+  for (const tokens of documents) {
+    for (const token of new Set(tokens)) {
+      documentFrequency.set(token, (documentFrequency.get(token) || 0) + 1);
     }
   }
 
-  return results
-    .sort((left, right) => right.score - left.score)
-    .slice(0, limit);
+  return chunks.map((chunk, documentIndex) => {
+    const tokens = documents[documentIndex];
+    const frequencies = new Map();
+    for (const token of tokens) {
+      frequencies.set(token, (frequencies.get(token) || 0) + 1);
+    }
+
+    let score = 0;
+    for (const token of queryTokens) {
+      const frequency = frequencies.get(token) || 0;
+      if (!frequency) continue;
+      const documentCount = documentFrequency.get(token) || 0;
+      const idf = Math.log(
+        1 +
+          (chunks.length - documentCount + 0.5) /
+            Math.max(0.5, documentCount),
+      );
+      const denominator =
+        frequency +
+        1.5 *
+          (1 - 0.75 + 0.75 * (tokens.length / Math.max(1, averageLength)));
+      score += idf * ((frequency * 2.5) / denominator);
+    }
+
+    return {
+      chunk,
+      scores: {
+        bm25: score,
+        vector: 0,
+        hybrid: 0,
+        rerank: 0,
+      },
+    };
+  });
+}
+
+function phraseAndCoverageScore(query, content, title) {
+  const normalizedQuery = query.toLowerCase().trim();
+  const normalizedContent = content.toLowerCase();
+  const normalizedTitle = title.toLowerCase();
+  const queryTokens = [...new Set(tokenize(query))];
+  const matchedTokens = queryTokens.filter((token) =>
+    normalizedContent.includes(token),
+  );
+  const coverage = matchedTokens.length / Math.max(1, queryTokens.length);
+  const phraseBonus =
+    normalizedQuery.length >= 3 && normalizedContent.includes(normalizedQuery)
+      ? 1
+      : 0;
+  const titleBonus = queryTokens.some((token) =>
+    normalizedTitle.includes(token),
+  )
+    ? 1
+    : 0;
+  return { coverage, phraseBonus, titleBonus };
+}
+
+export async function searchKnowledge(query, options = {}) {
+  const chunks = await getChunks(options.characterId);
+  if (!chunks.length) {
+    return {
+      results: [],
+      retrieval: {
+        strategy: "hybrid-bm25-vector-rerank",
+        candidateCount: 0,
+      },
+    };
+  }
+
+  const queryEmbedding = (await embedTexts([query])).vectors[0];
+  let candidates = bm25Scores(query, chunks);
+  candidates = candidates.map((candidate) => ({
+    ...candidate,
+    scores: {
+      ...candidate.scores,
+      vector: cosineSimilarity(
+        queryEmbedding,
+        candidate.chunk.embedding,
+      ),
+    },
+  }));
+  candidates = normalizeScores(candidates, "bm25");
+  candidates = normalizeScores(candidates, "vector");
+
+  let results = candidates.map((candidate) => {
+    const { chunk, scores } = candidate;
+    const lexical = phraseAndCoverageScore(
+      query,
+      chunk.content,
+      chunk.title,
+    );
+    const hybrid = scores.bm25 * 0.58 + scores.vector * 0.42;
+    const rerank =
+      hybrid +
+      lexical.coverage * 0.08 +
+      lexical.phraseBonus * 0.05 +
+      lexical.titleBonus * 0.02;
+
+    return {
+      documentId: chunk.documentId,
+      title: chunk.title,
+      characterId: chunk.characterId,
+      chunkId: chunk.chunkId,
+      chunkIndex: chunk.chunkIndex,
+      content: chunk.content,
+      score: rerank,
+      scores: {
+        ...scores,
+        hybrid,
+        rerank,
+        ...lexical,
+      },
+    };
+  });
+
+  results.sort((left, right) => right.score - left.score);
+  const limit = Math.max(1, Math.min(12, Number(options.limit) || 5));
+  results = results.slice(0, limit).map((result, index) => ({
+    ...result,
+    citationId: index + 1,
+  }));
+
+  return {
+    results,
+    retrieval: {
+      strategy: "hybrid-bm25-vector-rerank",
+      candidateCount: chunks.length,
+      resultCount: results.length,
+    },
+  };
 }

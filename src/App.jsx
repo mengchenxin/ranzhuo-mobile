@@ -80,6 +80,10 @@ import {
   streamGatewayChat,
   testProviderConnection,
 } from "./services/aiGateway";
+import {
+  buildLocalDemoReply,
+  selectRelevantMemories,
+} from "./services/memory";
 
 const runtimeGatewayUrl =
   import.meta.env.VITE_GATEWAY_URL ||
@@ -101,6 +105,7 @@ const defaultSettings = {
     apiKey: "",
     model: "deepseek-flash",
     temperature: 0.85,
+    demoMode: false,
   },
   voice: {
     autoPlay: true,
@@ -179,6 +184,23 @@ function App() {
           !active ||
           (!stored.serverKeyManaged && (!stored.configured || stored.clientKeyRequired))
         ) {
+          if (
+            active &&
+            stored.clientKeyRequired &&
+            !stored.serverKeyManaged &&
+            !settings.api.apiKey
+          ) {
+            setSettings((current) => ({
+              ...current,
+              api: {
+                ...current.api,
+                enabled: true,
+                demoMode: true,
+                transport: "gateway",
+                gatewayUrl: current.api.gatewayUrl || window.location.origin,
+              },
+            }));
+          }
           return;
         }
         setSettings((current) => ({
@@ -297,6 +319,21 @@ function App() {
 
     appendMessage(thread.id, outgoing);
 
+    if (settings.api.demoMode) {
+      setTypingThreadId(thread.id);
+      await new Promise((resolve) => window.setTimeout(resolve, 320));
+      appendMessage(thread.id, {
+        id: makeId("message"),
+        role: "assistant",
+        text: buildLocalDemoReply(payload.text, character),
+        time: formatNow(),
+        demo: true,
+        memoryUsed: selectRelevantMemories(payload.text, character, 3),
+      });
+      setTypingThreadId(null);
+      return;
+    }
+
     if (!settings.api.enabled) {
       notify("消息已保存在本机，连接模型后可继续对话");
       return;
@@ -335,6 +372,8 @@ function App() {
         }));
 
       let knowledgeContext = "";
+      let citations = [];
+      let retrievalMeta = null;
       if (transport === "gateway" && payload.text) {
         try {
           const retrieval = await searchKnowledge(api.gatewayUrl, {
@@ -346,6 +385,13 @@ function App() {
             (result) => result.score > 0.12,
           );
           if (usefulResults.length) {
+            retrievalMeta = retrieval.retrieval || null;
+            citations = usefulResults.map((result, index) => ({
+              citationId: index + 1,
+              title: result.title,
+              chunkId: result.chunkId,
+              score: Number(result.score.toFixed(4)),
+            }));
             knowledgeContext = usefulResults
               .map(
                 (result, index) =>
@@ -358,12 +404,20 @@ function App() {
         }
       }
 
+      const relevantMemories = selectRelevantMemories(
+        payload.text,
+        character,
+        5,
+      );
+      const memoryContext = relevantMemories
+        .map((memory) => memory.content)
+        .join("；");
       const systemMessage = {
         role: "system",
         content: [
           "你正在扮演角色「" + (character?.name || "未知角色") + "」。",
           character?.persona || "",
-          character?.memory ? "你记得：" + character.memory : "",
+          memoryContext ? "与当前话题相关的记忆：" + memoryContext : "",
           knowledgeContext
             ? "以下是本地知识库中与当前问题相关的内容。只在确实相关时使用，不要编造引用：\n" +
               knowledgeContext
@@ -389,6 +443,9 @@ function App() {
               text: streamedText,
               time: formatNow(),
               streamed: true,
+              citations,
+              memoryUsed: relevantMemories,
+              retrieval: retrievalMeta,
             });
             setTypingThreadId(null);
             return;
@@ -463,6 +520,9 @@ function App() {
         role: "assistant",
         text: content,
         time: formatNow(),
+        citations,
+        memoryUsed: relevantMemories,
+        retrieval: retrievalMeta,
       });
     } catch (error) {
       if (error.name === "AbortError") {
@@ -1083,7 +1143,11 @@ function DiscoverView({
 
 function MeView({ characters, moments, settings, onOpenSheet, notify }) {
   const memoryCount = characters.filter((character) => character.memory).length;
-  const enabledText = settings.api.enabled ? settings.api.model : "尚未连接";
+  const enabledText = settings.api.demoMode
+    ? "本地演示模式"
+    : settings.api.enabled
+      ? settings.api.model
+      : "尚未连接";
 
   return (
     <div className="view me-view">
@@ -1518,6 +1582,21 @@ function MessageBubble({ message, character, onPlay }) {
             {message.read ? <CheckCheck size={13} /> : null}
           </span>
         ) : null}
+        {!isUser &&
+        (message.citations?.length || message.memoryUsed?.length) ? (
+          <div className="message-grounding">
+            {message.citations?.map((citation) => (
+              <span key={citation.chunkId} title={"检索分数 " + citation.score}>
+                <FileText size={10} /> {citation.citationId}. {citation.title}
+              </span>
+            ))}
+            {message.memoryUsed?.length ? (
+              <span title={message.memoryUsed.map((item) => item.content).join("；")}>
+                <BrainCircuit size={10} /> 使用 {message.memoryUsed.length} 条记忆
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -1644,6 +1723,7 @@ function AILabSheet({ settings, characters, onClose, notify }) {
   const [logs, setLogs] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [searchResults, setSearchResults] = useState([]);
+  const [retrievalMeta, setRetrievalMeta] = useState(null);
   const [goal, setGoal] = useState("查找本地知识库，说明染酌小手机支持哪些模型，然后计算 128 * 3。");
   const [agentResult, setAgentResult] = useState(null);
   const [agentError, setAgentError] = useState("");
@@ -1812,6 +1892,7 @@ function AILabSheet({ settings, characters, onClose, notify }) {
         characterId: knowledgeCharacterId,
       });
       setSearchResults(payload.results || []);
+      setRetrievalMeta(payload.retrieval || null);
     } catch (error) {
       notify("检索失败：" + error.message);
     } finally {
@@ -1867,7 +1948,8 @@ function AILabSheet({ settings, characters, onClose, notify }) {
           <span>
             <strong>{statusText}</strong>
             <small>
-              {gatewayUrl} · {api.provider || "deepseek"}/{api.model || "-"}
+              {gatewayUrl} · {api.provider || "deepseek"}/{api.model || "-"} ·
+              RAG {health?.embedding?.provider || "loading"}
             </small>
           </span>
           <i />
@@ -2065,13 +2147,26 @@ function AILabSheet({ settings, characters, onClose, notify }) {
             </button>
             {searchResults.length ? (
               <div className="retrieval-results">
-                <strong>检索 Top {searchResults.length}</strong>
+                <strong>
+                  检索 Top {searchResults.length}
+                  {retrievalMeta?.strategy
+                    ? " · " + retrievalMeta.strategy
+                    : ""}
+                </strong>
                 {searchResults.map((result) => (
                   <div key={result.chunkId}>
                     <span>
-                      {result.title} · {Math.round(result.score * 100)}%
+                      [{result.citationId}] {result.title} ·{" "}
+                      {Math.round(result.score * 100)}%
                     </span>
                     <p>{result.content}</p>
+                    {result.scores ? (
+                      <small>
+                        BM25 {Number(result.scores.bm25 || 0).toFixed(2)} ·
+                        Vector {Number(result.scores.vector || 0).toFixed(2)} ·
+                        Rerank {Number(result.scores.rerank || 0).toFixed(2)}
+                      </small>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -2279,6 +2374,40 @@ function AILabSheet({ settings, characters, onClose, notify }) {
                   : "等待运行"}
               </span>
             </div>
+            {evaluationResult?.metrics ? (
+              <div className="evaluation-metrics">
+                <div>
+                  <span>Hit@3</span>
+                  <strong>
+                    {Math.round(
+                      (evaluationResult.metrics.retrievalHitRate || 0) * 100,
+                    )}
+                    %
+                  </strong>
+                </div>
+                <div>
+                  <span>MRR</span>
+                  <strong>
+                    {Number(evaluationResult.metrics.retrievalMrr || 0).toFixed(2)}
+                  </strong>
+                </div>
+                <div>
+                  <span>关键词覆盖</span>
+                  <strong>
+                    {Math.round(
+                      (evaluationResult.metrics.keywordCoverage || 0) * 100,
+                    )}
+                    %
+                  </strong>
+                </div>
+                <div>
+                  <span>平均耗时</span>
+                  <strong>
+                    {evaluationResult.metrics.averageLatencyMs || 0}ms
+                  </strong>
+                </div>
+              </div>
+            ) : null}
             <div className="evaluation-dimensions">
               {(evaluationCatalog?.suites?.[0]?.dimensions || [
                 "Tool Calling",
@@ -2322,7 +2451,7 @@ function AILabSheet({ settings, characters, onClose, notify }) {
               <small>
                 {evaluationResult
                   ? evaluationResult.durationMs + "ms"
-                  : "4 个确定性用例"}
+                  : "16 个确定性用例 + 3 个模型用例"}
               </small>
             </div>
             {evaluationResult?.cases?.length ? (
@@ -2468,23 +2597,33 @@ function SettingsSheet({ settings, onClose, onSave }) {
 
   const saveSettings = async () => {
     setSaveError("");
+    const normalizedDraft = {
+      ...draft,
+      api: {
+        ...draft.api,
+        demoMode: draft.api.apiKey ? false : draft.api.demoMode,
+      },
+    };
     if (
       draft.api.transport !== "gateway" ||
       (clientKeyRequired && !serverKeyManaged)
     ) {
-      onSave(draft);
+      onSave(normalizedDraft);
       return;
     }
 
     setSaving(true);
     try {
-      const result = await saveGatewayProviderConfig(draft.api.gatewayUrl, draft.api);
+      const result = await saveGatewayProviderConfig(
+        draft.api.gatewayUrl,
+        normalizedDraft.api,
+      );
       const stored = result.config || {};
       setKeyStored(Boolean(stored.apiKeyConfigured));
       onSave({
-        ...draft,
+        ...normalizedDraft,
         api: {
-          ...draft.api,
+          ...normalizedDraft.api,
           ...stored,
           apiKey: "",
           enabled: draft.api.enabled,
@@ -2528,6 +2667,19 @@ function SettingsSheet({ settings, onClose, onSave }) {
           type="checkbox"
           checked={draft.api.enabled}
           onChange={(event) => updateApi({ enabled: event.target.checked })}
+        />
+        <i />
+      </label>
+
+      <label className="toggle-row">
+        <span>
+          <strong>本地演示模式</strong>
+          <small>不调用模型，使用本地固定回复展示交互和记忆检索</small>
+        </span>
+        <input
+          type="checkbox"
+          checked={draft.api.demoMode}
+          onChange={(event) => updateApi({ demoMode: event.target.checked })}
         />
         <i />
       </label>

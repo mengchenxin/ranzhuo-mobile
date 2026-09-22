@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
-import { executeTool, safeCalculate } from "./agent.mjs";
+import goldSet from "./eval-gold-set.json" with { type: "json" };
+import { executeTool, runAgent, safeCalculate } from "./agent.mjs";
 import { createChatCompletion } from "./providers.mjs";
 import {
   deleteDocument,
@@ -46,10 +47,11 @@ async function runRagRoundtrip() {
   });
 
   try {
-    const results = await searchKnowledge(marker, {
+    const retrieval = await searchKnowledge(marker, {
       limit: 3,
       characterId: "shared",
     });
+    const results = retrieval.results;
     assert(results.length > 0, "知识库检索没有返回结果");
     assert(
       results[0].content.includes(marker),
@@ -60,10 +62,146 @@ async function runRagRoundtrip() {
       topScore: Number(results[0].score.toFixed(4)),
       topTitle: results[0].title,
       chunks: document.chunks.length,
+      strategy: retrieval.retrieval.strategy,
     };
   } finally {
     await deleteDocument(document.id);
   }
+}
+
+async function runGoldSetCases() {
+  const documentIds = [];
+  const cases = [];
+
+  try {
+    for (const document of goldSet.documents) {
+      const ingested = await ingestDocument({
+        title: document.title,
+        text: document.content,
+        characterId: "shared",
+        source: "gold-set",
+      });
+      documentIds.push(ingested.id);
+    }
+
+    const reciprocalRanks = [];
+    const keywordCoverage = [];
+
+    for (const testCase of goldSet.retrievalCases) {
+      cases.push(
+        await runCase(testCase.id, "RAG 金标：" + testCase.query, async () => {
+          const retrieval = await searchKnowledge(testCase.query, {
+            limit: 3,
+            characterId: "shared",
+          });
+          const results = retrieval.results;
+          const rank = results.findIndex(
+            (result) => result.title === testCase.expectedTitle,
+          );
+          assert(rank >= 0, "Top 3 未命中期望文档：" + testCase.expectedTitle);
+
+          const topResult = results[rank];
+          const matchedKeywords = testCase.keywords.filter((keyword) =>
+            topResult.content.includes(keyword),
+          );
+          const coverage =
+            matchedKeywords.length / Math.max(1, testCase.keywords.length);
+          assert(coverage >= 0.6, "命中文档的关键词覆盖率低于 60%");
+
+          reciprocalRanks.push(1 / (rank + 1));
+          keywordCoverage.push(coverage);
+          return {
+            expectedTitle: testCase.expectedTitle,
+            rank: rank + 1,
+            coverage: Number(coverage.toFixed(3)),
+            score: Number(topResult.score.toFixed(4)),
+            scores: topResult.scores,
+            strategy: retrieval.retrieval.strategy,
+          };
+        }),
+      );
+    }
+
+    const retrievalSummary = {
+      hitRate:
+        cases.filter((testCase) => testCase.passed).length /
+        Math.max(1, cases.length),
+      mrr:
+        reciprocalRanks.reduce((total, value) => total + value, 0) /
+        Math.max(1, reciprocalRanks.length),
+      keywordCoverage:
+        keywordCoverage.reduce((total, value) => total + value, 0) /
+        Math.max(1, keywordCoverage.length),
+    };
+    return { cases, retrievalSummary };
+  } finally {
+    for (const documentId of documentIds) {
+      await deleteDocument(documentId);
+    }
+  }
+}
+
+function traceTools(trace) {
+  return trace.flatMap((step) =>
+    (step.toolCalls || []).map((tool) => tool.name),
+  );
+}
+
+async function runLiveCases(providerConfig) {
+  const cases = [];
+
+  cases.push(
+    await runCase("live.deepseek.reply", "模型：真实接口回复", async () => {
+      const payload = await createChatCompletion({
+        providerConfig: {
+          ...providerConfig,
+          temperature: 0,
+        },
+        messages: [
+          {
+            role: "user",
+            content: goldSet.liveCases[0].prompt,
+          },
+        ],
+        maxTokens: 16,
+      });
+      const content = payload.choices?.[0]?.message?.content?.trim() || "";
+      assert(content.length > 0, "模型没有返回文本");
+      return {
+        sample: content.slice(0, 80),
+        attempts: payload.gatewayMeta?.attempts || 1,
+        usage: payload.usage || null,
+      };
+    }),
+  );
+
+  for (const testCase of goldSet.liveCases.slice(1)) {
+    cases.push(
+      await runCase(testCase.id, "Agent 金标：" + testCase.goal, async () => {
+        const result = await runAgent({
+          goal: testCase.goal,
+          providerConfig: {
+            ...providerConfig,
+            temperature: 0,
+          },
+          maxSteps: 3,
+        });
+        const usedTools = traceTools(result.trace);
+        assert(
+          usedTools.includes(testCase.expectedTool),
+          "Agent 未调用期望工具：" + testCase.expectedTool,
+        );
+        return {
+          answer: result.answer.slice(0, 300),
+          usedTools,
+          traceSteps: result.trace.length,
+          usage: result.usage,
+        };
+      }),
+    );
+  }
+
+  return cases;
 }
 
 export async function runEvaluationSuite({
@@ -109,36 +247,35 @@ export async function runEvaluationSuite({
     await runCase("rag.roundtrip", "RAG：入库与检索闭环", runRagRoundtrip),
   );
 
+  const goldResult = await runGoldSetCases();
+  cases.push(...goldResult.cases);
+
   if (includeLive) {
-    cases.push(
-      await runCase("provider.live_reply", "模型：真实接口回复", async () => {
-        const payload = await createChatCompletion({
-          providerConfig: {
-            ...providerConfig,
-            temperature: 0,
-          },
-          messages: [
-            {
-              role: "user",
-              content: "只回复：AI_EVAL_OK",
-            },
-          ],
-          maxTokens: 12,
-        });
-        const content = payload.choices?.[0]?.message?.content?.trim() || "";
-        assert(content.length > 0, "模型没有返回文本");
-        return {
-          sample: content.slice(0, 80),
-          attempts: payload.gatewayMeta?.attempts || 1,
-          usage: payload.usage || null,
-        };
-      }),
-    );
+    cases.push(...(await runLiveCases(providerConfig)));
+  } else {
+    cases.push({
+      id: "live.suite",
+      name: "真实模型金标（未启用）",
+      passed: true,
+      skipped: true,
+      latencyMs: 0,
+      details: {
+        cases: goldSet.liveCases.length,
+        reason: "includeLive=false",
+      },
+    });
   }
 
   const passed = cases.filter((testCase) => testCase.passed).length;
+  const retrievalCases = cases.filter((testCase) =>
+    testCase.id.startsWith("rag."),
+  );
+  const retrievalHitRate =
+    retrievalCases.filter((testCase) => testCase.passed).length /
+    Math.max(1, retrievalCases.length);
+
   return {
-    suite: "ranzhuo-ai-foundation",
+    suite: "ranzhuo-ai-foundation-v2",
     includeLive,
     startedAt: new Date(startedAt).toISOString(),
     durationMs: Date.now() - startedAt,
@@ -146,6 +283,15 @@ export async function runEvaluationSuite({
     passed,
     failed: cases.length - passed,
     score: cases.length ? passed / cases.length : 0,
+    metrics: {
+      retrievalHitRate,
+      retrievalMrr: goldResult.retrievalSummary.mrr,
+      keywordCoverage: goldResult.retrievalSummary.keywordCoverage,
+      averageLatencyMs: Math.round(
+        cases.reduce((total, testCase) => total + testCase.latencyMs, 0) /
+          Math.max(1, cases.length),
+      ),
+    },
     cases,
   };
 }

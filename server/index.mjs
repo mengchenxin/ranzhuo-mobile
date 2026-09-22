@@ -6,6 +6,7 @@ import { URL } from "node:url";
 import { fileURLToPath } from "node:url";
 import { runAgent, tools } from "./agent.mjs";
 import { runEvaluationSuite } from "./evaluations.mjs";
+import { embeddingInfo } from "./embeddings.mjs";
 import {
   createChatCompletion,
   providerCatalog,
@@ -25,7 +26,6 @@ import {
   getCallLogs,
   getProviderConfig,
   maskProviderConfig,
-  readStore,
   setProviderConfig,
 } from "./store.mjs";
 
@@ -292,6 +292,7 @@ async function route(request, response) {
       version: "0.1.0",
       dataDir,
       providers: providerCatalog(),
+      embedding: embeddingInfo(),
       agentTools: tools.map((tool) => tool.function.name),
     });
     return;
@@ -333,7 +334,7 @@ async function route(request, response) {
   }
 
   if (request.method === "GET" && pathname === "/api/metrics") {
-    const logs = await readStore("logs", []);
+    const logs = await getCallLogs(300);
     const successful = logs.filter((log) => log.status === "ok");
     const latencyValues = logs
       .map((log) => Number(log.latencyMs))
@@ -371,10 +372,10 @@ async function route(request, response) {
       suites: [
         {
           id: "ranzhuo-ai-foundation",
-          name: "AI 基础工程评测",
-          deterministicCases: 4,
-          optionalLiveCases: 1,
-          dimensions: ["Tool Calling", "RAG", "Provider"],
+          name: "AI 工程金标评测",
+          deterministicCases: 16,
+          optionalLiveCases: 3,
+          dimensions: ["Tool Calling", "RAG", "Memory", "Provider"],
         },
       ],
     });
@@ -563,9 +564,7 @@ async function route(request, response) {
 
   if (request.method === "POST" && pathname === "/api/rag/search") {
     const body = await readBody(request);
-    sendJson(response, 200, {
-      results: await searchKnowledge(body.query, body),
-    });
+    sendJson(response, 200, await searchKnowledge(body.query, body));
     return;
   }
 

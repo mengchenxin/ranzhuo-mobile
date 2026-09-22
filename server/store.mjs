@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getDatabaseCallLogs, insertCallLog } from "./database.mjs";
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.resolve(
@@ -67,19 +68,13 @@ export function updateStore(name, fallback, updater) {
 }
 
 export async function appendCallLog(entry) {
-  return updateStore("logs", [], (logs) => {
-    logs.unshift({
-      id: crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
-      ...entry,
-    });
-    return logs.slice(0, 300);
-  });
+  await insertCallLog(entry);
 }
 
 export async function getCallLogs(limit = 50) {
-  const logs = await readStore("logs", []);
-  return logs.slice(0, Math.max(1, Math.min(200, Number(limit) || 50)));
+  return getDatabaseCallLogs(
+    Math.max(1, Math.min(300, Number(limit) || 50)),
+  );
 }
 
 export async function getProviderConfig() {

@@ -63,13 +63,14 @@ function safeCalculate(expression) {
 
 async function executeTool(toolName, args, context) {
   if (toolName === "search_knowledge") {
-    const results = await searchKnowledge(args.query, {
+    const retrieval = await searchKnowledge(args.query, {
       limit: args.limit,
       characterId: context.characterId,
     });
     return {
       query: args.query,
-      results: results.slice(0, 5),
+      results: retrieval.results.slice(0, 5),
+      retrieval: retrieval.retrieval,
     };
   }
 

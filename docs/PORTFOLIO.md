@@ -34,14 +34,21 @@ Ranzhuo AI Gateway (Node.js, 127.0.0.1)
         |
         +-- Local RAG
         |     +-- Document chunking
-        |     +-- CJK n-gram hashing vector
-        |     +-- Cosine similarity search
+        |     +-- Configurable embedding provider
+        |     +-- BM25 + vector hybrid search
+        |     +-- Reranking and citations
         |
         +-- Observability
               +-- Latency
               +-- Success rate
               +-- Token usage
               +-- Tool trace
+              +-- Golden-set evaluation
+
+        +-- SQLite persistence
+              +-- Documents and chunks
+              +-- RAG indexes
+              +-- Call logs
               +-- Evaluation suite
 ```
 
@@ -97,10 +104,11 @@ Provider 层对 429、5xx 和网络错误执行指数退避重试，并记录实
 
 - 设计并实现多供应商 LLM Gateway，通过统一 Chat Completions 适配层支持 DeepSeek、OpenAI 与 Ollama，并通过 SSE 实现低延迟流式输出。
 - 实现最多 5 步的 Tool-calling Agent Runtime，包含工具 Schema、执行循环、参数约束、错误回传和可视化执行 Trace。
-- 构建 Local First RAG 流程，完成文档切块、CJK 字符 n-gram 向量化、余弦检索和角色级知识隔离。
-- 实现角色上下文组装与长期记忆抽取，将角色设定、历史对话和知识检索结果动态注入模型输入。
+- 构建 Local First RAG 流程，完成文档切块、可配置 Embedding、BM25 + 向量混合检索、重排序、来源引用和角色级知识隔离。
+- 实现角色上下文组装、长期记忆抽取和相关性检索，将角色设定、知识检索结果和当前问题需要的记忆动态注入模型输入。
 - 建立调用观测面板，统计成功率、延迟、Token/字符量和接口状态，并保留最近 300 条无敏感正文的调用日志。
-- 构建可重复运行的 AI 工程评测套件，覆盖 Tool Calling、RAG 和真实模型连通性，并为 Provider 层增加指数退避重试与停止生成能力。
+- 构建 17 项确定性 AI 工程评测套件，覆盖 Tool Calling、RAG Hit@3、MRR、关键词覆盖和真实模型连通性；当前 Hit@3 与 MRR 均为 100%。
+- 为 Provider 层增加指数退避重试、停止生成和 SQLite 调用日志持久化，并提供无需额外 Token 的本地演示模式。
 - 使用 React、Vite 与 Capacitor 构建移动端优先、桌面端增强的跨端应用，Android 原生工程可同步运行。
 
 ## 验证方式

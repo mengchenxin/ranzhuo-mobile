@@ -2,6 +2,16 @@
 
 面向 AI Roleplay 与情感陪伴场景的 Local First 移动端应用，也是面向 AI 应用工程师岗位的完整作品集项目。
 
+## 效果展示
+
+无需 API Key 的本地演示模式：
+
+![本地演示模式](docs/screenshots/demo-chat.png)
+
+包含 Tool Calling、RAG Hit@3、MRR 和关键词覆盖的工程评测：
+
+![AI 工程评测](docs/screenshots/evaluation.png)
+
 ## 核心能力
 
 - 手机式多页面交互：消息、角色、发现、我的
@@ -10,14 +20,16 @@
 - 本地 AI Gateway，解决浏览器 CORS 与密钥边界问题
 - SSE 流式角色回复
 - Tool-calling Agent，包含工具执行循环与 Trace
-- 本地 RAG：文档切块、向量化、相似度检索和角色知识隔离
+- 本地 RAG：文档切块、BM25 + 向量混合检索、重排序、来源引用和角色知识隔离
 - 调用观测：成功率、延迟、Token/字符量与最近 300 条日志
 - 模型可靠性：自动重试、模型连通性测试和停止流式生成
-- 长期记忆：模型提取候选、人工确认、去重后写入
+- 长期记忆：模型提取候选、人工确认、去重和按问题相关性动态检索
 - 桌面端 AI 工作台：Agent、知识库、调用观测和工程评测
+- SQLite 持久化 RAG、知识块与调用日志
+- 无 Key 可用的本地演示模式
 - Capacitor Android 工程与响应式 Web 应用
 
-架构与简历描述见 [docs/PORTFOLIO.md](docs/PORTFOLIO.md)。
+架构与简历描述见 [docs/PORTFOLIO.md](docs/PORTFOLIO.md)，第一轮实测结果见 [docs/ROUND-1-RESULTS.md](docs/ROUND-1-RESULTS.md)。
 
 ## 本地运行
 
@@ -64,6 +76,7 @@ npm run dev:full
 
 ```powershell
 npm run test:gateway
+npm run test:memory
 npm run eval:ai
 npm run build
 ```
@@ -127,6 +140,8 @@ Android APK 默认连接线上 Render 服务，也可以在设置页中改成其
 6. 部署完成后使用 Render 提供的 HTTPS 地址访问。
 
 公开简历 Demo 推荐设置 `RANZHUO_REQUIRE_CLIENT_KEY=true`。生产环境未配置服务端模型 Key 时，系统会自动启用该模式：每位访问者必须填写自己的 DeepSeek Key，Key 只保存在访问者浏览器中。
+
+RAG 默认使用无需额外费用的本地字符 n-gram 向量，并叠加 BM25 与重排序。生产环境可以配置兼容 OpenAI Embeddings 接口的 `RANZHUO_EMBEDDING_*` 环境变量，升级为真实语义向量。
 
 生产环境设置 `DEEPSEEK_API_KEY` 后，Gateway 会自动启用 DeepSeek，无需在浏览器重复填写密钥。
 
