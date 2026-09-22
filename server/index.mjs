@@ -221,6 +221,9 @@ function fallbackProviderFromRequest(body, request) {
     apiKey:
       fallback.apiKey ||
       request.headers["x-fallback-provider-key"] ||
+      (fallback.provider === (body.provider || "deepseek")
+        ? body.apiKey || request.headers["x-provider-key"] || ""
+        : "") ||
       "",
   });
 }
