@@ -11,6 +11,7 @@
     "cap:add:android": "node -r ./scripts/capacitor-node-shim.cjs ./node_modules/@capacitor/cli/bin/capacitor add android",
     "cap:sync": "npm run build && node -r ./scripts/capacitor-node-shim.cjs ./node_modules/@capacitor/cli/bin/capacitor sync",
     "cap:open": "node -r ./scripts/capacitor-node-shim.cjs ./node_modules/@capacitor/cli/bin/capacitor open android",
+    "cap:apk": "npm run cap:sync && cd android && gradlew.bat assembleDebug",
     "dev:full": "node scripts/dev-full.mjs",
     "gateway": "node server/index.mjs",
     "test:gateway": "node scripts/smoke-ai.mjs",

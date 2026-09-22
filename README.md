@@ -84,6 +84,30 @@ npm run cap:open
 
 首次生成 Android 工程需要 Android Studio、Android SDK 和 Java 环境。
 
+直接构建调试 APK：
+
+```powershell
+npm run cap:apk
+```
+
+APK 输出位置：
+
+```text
+android\app\build\outputs\apk\debug\app-debug.apk
+```
+
+## 手机上使用
+
+最快的方式是用手机浏览器打开线上地址：
+
+```text
+https://ranzhuo-mobile.onrender.com/
+```
+
+进入 `我的 -> 模型与接口`，选择 `本地 AI Gateway`、`DeepSeek` 和 `deepseek-flash`，填写自己的 API Key，保存后即可聊天。
+
+Android APK 默认连接线上 Render 服务，也可以在设置页中改成其他 Gateway 地址。手机上的 `127.0.0.1` 指向手机自身，不能用来访问电脑上的本地 Gateway。
+
 ## GitHub 与线上部署
 
 项目包含：

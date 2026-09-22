@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Capacitor } from "@capacitor/core";
 import {
   Activity,
   Bell,
@@ -84,6 +85,8 @@ const runtimeGatewayUrl =
   import.meta.env.VITE_GATEWAY_URL ||
   (import.meta.env.DEV
     ? "http://127.0.0.1:8787"
+    : Capacitor.isNativePlatform()
+      ? "https://ranzhuo-mobile.onrender.com"
     : typeof window !== "undefined"
       ? window.location.origin
       : "");
