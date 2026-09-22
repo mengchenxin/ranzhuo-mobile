@@ -234,6 +234,22 @@ try {
     throw new Error("Client-key mode allowed saving a visitor key on the server");
   }
 
+  const evaluationResponse = await fetch(baseUrl + "/api/evaluations/run", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      provider: "deepseek",
+      model: "deepseek-flash",
+      includeLive: false,
+    }),
+  });
+  const evaluation = await evaluationResponse.json();
+  if (!evaluationResponse.ok || evaluation.failed) {
+    throw new Error("Client-key mode blocked the deterministic evaluation suite");
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -247,6 +263,7 @@ try {
         retryAttempts: providerTest.attempts,
         providerConfigPersisted: true,
         clientKeyEnforced: true,
+        deterministicEvaluationWithoutKey: evaluation.passed,
       },
       null,
       2,

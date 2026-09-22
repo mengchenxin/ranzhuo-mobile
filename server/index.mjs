@@ -393,12 +393,19 @@ async function route(request, response) {
       return;
     }
     const body = await readBody(request);
-    const providerConfig = await providerFromRequest(body, request);
+    const includeLive = Boolean(body.includeLive);
+    const providerConfig = includeLive
+      ? await providerFromRequest(body, request)
+      : resolveProvider({
+          provider: body.provider || "deepseek",
+          baseUrl: body.baseUrl,
+          model: body.model || "deepseek-flash",
+        });
     const startedAt = Date.now();
     try {
       const result = await runEvaluationSuite({
         providerConfig,
-        includeLive: Boolean(body.includeLive),
+        includeLive,
       });
       await appendCallLog({
         route: "/api/evaluations/run",
