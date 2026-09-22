@@ -1,5 +1,21 @@
-import { createChatCompletion } from "./providers.mjs";
+import { z } from "zod";
+import { createChatCompletionResilient } from "./providers.mjs";
 import { searchKnowledge } from "./rag.mjs";
+
+const toolSchemas = {
+  search_knowledge: z
+    .object({
+      query: z.string().min(1).max(1000),
+      limit: z.number().int().min(1).max(8).optional(),
+    })
+    .strict(),
+  calculate: z
+    .object({
+      expression: z.string().min(1).max(80),
+    })
+    .strict(),
+  get_current_time: z.object({}).strict(),
+};
 
 const tools = [
   {
@@ -50,6 +66,21 @@ const tools = [
   },
 ];
 
+export function validateToolArguments(toolName, args) {
+  const schema = toolSchemas[toolName];
+  if (!schema) throw new Error("未知工具：" + toolName);
+  const validation = schema.safeParse(args);
+  if (!validation.success) {
+    throw new Error(
+      "工具参数校验失败：" +
+        validation.error.issues
+          .map((issue) => issue.path.join(".") + " " + issue.message)
+          .join("; "),
+    );
+  }
+  return validation.data;
+}
+
 function safeCalculate(expression) {
   const normalized = String(expression || "").replace(/\s+/g, "");
   if (!/^[0-9+\-*/%.()]{1,80}$/.test(normalized)) {
@@ -62,13 +93,15 @@ function safeCalculate(expression) {
 }
 
 async function executeTool(toolName, args, context) {
+  const validatedArgs = validateToolArguments(toolName, args);
+
   if (toolName === "search_knowledge") {
-    const retrieval = await searchKnowledge(args.query, {
-      limit: args.limit,
+    const retrieval = await searchKnowledge(validatedArgs.query, {
+      limit: validatedArgs.limit,
       characterId: context.characterId,
     });
     return {
-      query: args.query,
+      query: validatedArgs.query,
       results: retrieval.results.slice(0, 5),
       retrieval: retrieval.retrieval,
     };
@@ -76,8 +109,8 @@ async function executeTool(toolName, args, context) {
 
   if (toolName === "calculate") {
     return {
-      expression: args.expression,
-      result: safeCalculate(args.expression),
+      expression: validatedArgs.expression,
+      result: safeCalculate(validatedArgs.expression),
     };
   }
 
@@ -96,8 +129,12 @@ async function executeTool(toolName, args, context) {
 export async function runAgent({
   goal,
   providerConfig,
+  fallbackProviderConfig,
   character,
   maxSteps = 4,
+  maxToolCalls = Number(process.env.RANZHUO_AGENT_MAX_TOOL_CALLS || 8),
+  timeoutMs = Number(process.env.RANZHUO_AGENT_TIMEOUT_MS || 60_000),
+  signal,
 }) {
   if (!goal?.trim()) throw new Error("请填写 Agent 目标");
 
@@ -106,7 +143,8 @@ export async function runAgent({
       role: "system",
       content: [
         "你是染酌 AI 工作台中的任务执行 Agent。",
-        "必要时调用工具，不要编造工具结果。",
+        "先判断是否需要工具，再逐步执行，不要编造工具结果。",
+        "工具参数必须严格符合 Schema。",
         "最终回答要简洁，并说明哪些结论来自本地知识库。",
         character?.persona ? "当前角色设定：" + character.persona : "",
       ]
@@ -117,22 +155,35 @@ export async function runAgent({
   ];
   const trace = [];
   const stepLimit = Math.max(1, Math.min(8, Number(maxSteps) || 4));
+  const toolCallLimit = Math.max(1, Math.min(20, Number(maxToolCalls) || 8));
+  const deadline = Date.now() + Math.max(1000, Number(timeoutMs) || 60_000);
   const totalUsage = {
     prompt_tokens: 0,
     completion_tokens: 0,
     total_tokens: 0,
   };
   let hasUsage = false;
+  let toolCallCount = 0;
 
   for (let step = 1; step <= stepLimit; step += 1) {
+    if (signal?.aborted) throw new DOMException("Agent 已取消", "AbortError");
+    if (Date.now() >= deadline) throw new Error("Agent 执行超时");
+
     const startedAt = Date.now();
-    const payload = await createChatCompletion({
+    const remainingMs = Math.max(1, deadline - Date.now());
+    const requestSignal = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(remainingMs)])
+      : AbortSignal.timeout(remainingMs);
+    const payload = await createChatCompletionResilient({
       providerConfig,
+      fallbackProviderConfig,
       messages,
       tools,
+      signal: requestSignal,
     });
     const message = payload.choices?.[0]?.message;
     if (!message) throw new Error("模型没有返回可执行结果");
+
     if (payload.usage) {
       hasUsage = true;
       totalUsage.prompt_tokens += Number(payload.usage.prompt_tokens) || 0;
@@ -152,6 +203,9 @@ export async function runAgent({
         arguments: toolCall.function?.arguments,
       })),
       latencyMs: Date.now() - startedAt,
+      provider: payload.gatewayMeta?.provider,
+      model: payload.gatewayMeta?.model,
+      fallbackUsed: Boolean(payload.gatewayMeta?.fallbackUsed),
     });
 
     if (!toolCalls.length) {
@@ -165,6 +219,11 @@ export async function runAgent({
 
     messages.push(message);
     for (const toolCall of toolCalls) {
+      toolCallCount += 1;
+      if (toolCallCount > toolCallLimit) {
+        throw new Error("Agent 工具调用次数超过上限");
+      }
+
       const name = toolCall.function?.name;
       let args = {};
       try {
@@ -184,7 +243,10 @@ export async function runAgent({
           content: JSON.stringify(result),
         });
       } catch (error) {
-        const result = { error: error.message };
+        const result = {
+          error: error.message,
+          type: "validation_error",
+        };
         trace.push({ step, type: "tool_error", name, result });
         messages.push({
           role: "tool",

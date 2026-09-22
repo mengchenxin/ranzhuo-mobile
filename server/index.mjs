@@ -1,4 +1,5 @@
 import http from "node:http";
+import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
@@ -9,9 +10,12 @@ import { runEvaluationSuite } from "./evaluations.mjs";
 import { embeddingInfo } from "./embeddings.mjs";
 import {
   createChatCompletion,
+  createChatCompletionResilient,
+  getCircuitStates,
   providerCatalog,
   resolveProvider,
   streamChatCompletion,
+  streamChatCompletionResilient,
   testProviderConnection,
 } from "./providers.mjs";
 import {
@@ -209,8 +213,27 @@ async function providerFromRequest(body, request) {
   });
 }
 
+function fallbackProviderFromRequest(body, request) {
+  const fallback = body.fallback;
+  if (!fallback?.enabled || !fallback.model) return null;
+  return resolveProvider({
+    ...fallback,
+    apiKey:
+      fallback.apiKey ||
+      request.headers["x-fallback-provider-key"] ||
+      "",
+  });
+}
+
+function getTraceId(request) {
+  const provided = String(request.headers["x-trace-id"] || "").trim();
+  return provided || crypto.randomUUID();
+}
+
 async function handleChat(request, response, body) {
   const providerConfig = await providerFromRequest(body, request);
+  const fallbackProviderConfig = fallbackProviderFromRequest(body, request);
+  const traceId = getTraceId(request);
   const startedAt = Date.now();
   let content = "";
   let reasoning = "";
@@ -220,6 +243,7 @@ async function handleChat(request, response, body) {
     "Cache-Control": "no-cache, no-transform",
     Connection: "keep-alive",
     "X-Accel-Buffering": "no",
+    "X-Trace-Id": traceId,
   });
 
   const sendEvent = (event, data) => {
@@ -227,9 +251,17 @@ async function handleChat(request, response, body) {
     response.write("data: " + JSON.stringify(data) + "\n\n");
   };
 
+  sendEvent("start", {
+    traceId,
+    provider: providerConfig.provider,
+    model: providerConfig.model,
+    fallbackConfigured: Boolean(fallbackProviderConfig),
+  });
+
   try {
-    const result = await streamChatCompletion({
+    const result = await streamChatCompletionResilient({
       providerConfig,
+      fallbackProviderConfig,
       messages: body.messages || [],
       temperature: body.temperature,
       onDelta(delta) {
@@ -245,8 +277,10 @@ async function handleChat(request, response, body) {
     sendEvent("done", {
       usage: result.usage,
       finishReason: result.finishReason,
-      provider: providerConfig.provider,
-      model: providerConfig.model,
+      provider: result.provider || providerConfig.provider,
+      model: result.model || providerConfig.model,
+      fallbackUsed: Boolean(result.fallbackUsed),
+      traceId,
     });
     await appendCallLog({
       route: "/api/chat/stream",
@@ -258,6 +292,8 @@ async function handleChat(request, response, body) {
       outputChars: content.length,
       usage: result.usage,
       reasoningChars: reasoning.length,
+      fallbackUsed: Boolean(result.fallbackUsed),
+      traceId,
     });
   } catch (error) {
     sendEvent("error", { message: error.message });
@@ -268,6 +304,7 @@ async function handleChat(request, response, body) {
       status: "error",
       latencyMs: Date.now() - startedAt,
       error: error.message,
+      traceId,
     });
   } finally {
     response.end();
@@ -294,6 +331,7 @@ async function route(request, response) {
       providers: providerCatalog(),
       embedding: embeddingInfo(),
       agentTools: tools.map((tool) => tool.function.name),
+      circuits: getCircuitStates(),
     });
     return;
   }
@@ -373,7 +411,7 @@ async function route(request, response) {
         {
           id: "ranzhuo-ai-foundation",
           name: "AI 工程金标评测",
-          deterministicCases: 16,
+          deterministicCases: 17,
           optionalLiveCases: 3,
           dimensions: ["Tool Calling", "RAG", "Memory", "Provider"],
         },
@@ -435,6 +473,8 @@ async function route(request, response) {
     }
     const body = await readBody(request);
     const providerConfig = await providerFromRequest(body, request);
+    const fallbackProviderConfig = fallbackProviderFromRequest(body, request);
+    const traceId = getTraceId(request);
     try {
       const result = await testProviderConnection(providerConfig);
       await appendCallLog({
@@ -478,11 +518,14 @@ async function route(request, response) {
     }
     const body = await readBody(request);
     const providerConfig = await providerFromRequest(body, request);
+    const fallbackProviderConfig = fallbackProviderFromRequest(body, request);
+    const traceId = getTraceId(request);
     const startedAt = Date.now();
     try {
       const result = await runAgent({
         goal: body.goal,
         providerConfig,
+        fallbackProviderConfig,
         character: body.character,
         maxSteps: body.maxSteps,
       });
@@ -494,8 +537,9 @@ async function route(request, response) {
         latencyMs: Date.now() - startedAt,
         steps: result.trace.length,
         usage: result.usage,
+        traceId,
       });
-      sendJson(response, 200, result);
+      sendJson(response, 200, { ...result, traceId });
     } catch (error) {
       await appendCallLog({
         route: "/api/agent/run",
@@ -504,6 +548,7 @@ async function route(request, response) {
         status: "error",
         latencyMs: Date.now() - startedAt,
         error: error.message,
+        traceId,
       });
       sendJson(response, 500, { error: error.message });
     }

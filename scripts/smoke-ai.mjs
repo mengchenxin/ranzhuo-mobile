@@ -46,6 +46,28 @@ const mockProvider = http.createServer((request, response) => {
 });
 mockProvider.listen(8801, "127.0.0.1");
 
+let failingPrimaryCount = 0;
+const failingPrimary = http.createServer((_request, response) => {
+  failingPrimaryCount += 1;
+  response.writeHead(503, { "Content-Type": "application/json" });
+  response.end(JSON.stringify({ error: { message: "primary unavailable" } }));
+});
+failingPrimary.listen(8802, "127.0.0.1");
+
+const fallbackProvider = http.createServer((_request, response) => {
+  response.writeHead(200, {
+    "Content-Type": "text/event-stream",
+  });
+  response.write(
+    'data: {"choices":[{"delta":{"content":"fallback ok"},"finish_reason":null}]}\n\n',
+  );
+  response.write(
+    'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+  );
+  response.end("data: [DONE]\n\n");
+});
+fallbackProvider.listen(8803, "127.0.0.1");
+
 function startGateway(extraEnv = {}) {
   return spawn(process.execPath, ["server/index.mjs"], {
     cwd: root,
@@ -108,9 +130,9 @@ try {
   const beforeLogs = await fetch(baseUrl + "/api/logs?limit=100").then(
     (response) => response.json(),
   );
-  const probeResponses = await Promise.all(
-    Array.from({ length: 3 }, () =>
-      fetch(baseUrl + "/api/agent/run", {
+  const probeResults = await Promise.all(
+    Array.from({ length: 3 }, async () => {
+      const response = await fetch(baseUrl + "/api/agent/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -118,18 +140,31 @@ try {
           model: "log-probe",
           goal: "验证调用日志持久化",
         }),
-      }),
-    ),
+      });
+      return {
+        status: response.status,
+        body: await response.text(),
+      };
+    }),
   );
-  if (probeResponses.some((response) => response.status !== 500)) {
-    throw new Error("Log probe did not fail as expected");
+  if (probeResults.some((result) => result.status !== 500)) {
+    throw new Error(
+      "Log probe did not fail as expected: " + JSON.stringify(probeResults),
+    );
   }
 
   const afterLogs = await fetch(baseUrl + "/api/logs?limit=100").then(
     (response) => response.json(),
   );
   if (afterLogs.logs.length - beforeLogs.logs.length < 3) {
-    throw new Error("Concurrent call logs were not persisted");
+    throw new Error(
+      "Concurrent call logs were not persisted: " +
+        JSON.stringify({
+          before: beforeLogs.logs.length,
+          after: afterLogs.logs.length,
+          probes: probeResults,
+        }),
+    );
   }
 
   const metrics = await fetch(baseUrl + "/api/metrics").then((response) =>
@@ -157,6 +192,43 @@ try {
   }
   if (providerTest.attempts !== 2 || mockRequestCount !== 2) {
     throw new Error("Provider retry probe did not recover after a 503");
+  }
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const fallbackResponse = await fetch(baseUrl + "/api/chat/stream", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        provider: "custom",
+        baseUrl: "http://127.0.0.1:8802/v1",
+        model: "primary-model",
+        apiKey: "primary-key",
+        messages: [{ role: "user", content: "hello" }],
+        fallback: {
+          enabled: true,
+          provider: "custom",
+          baseUrl: "http://127.0.0.1:8803/v1",
+          model: "fallback-model",
+          apiKey: "fallback-key",
+        },
+      }),
+    });
+    const streamText = await fallbackResponse.text();
+    if (!fallbackResponse.ok || !streamText.includes('"fallbackUsed":true')) {
+      throw new Error("Provider fallback did not recover the stream");
+    }
+  }
+
+  const healthWithCircuit = await fetch(baseUrl + "/api/health").then(
+    (response) => response.json(),
+  );
+  const primaryCircuit = healthWithCircuit.circuits.find(
+    (circuit) => circuit.model === "primary-model",
+  );
+  if (!primaryCircuit?.open || failingPrimaryCount < 9) {
+    throw new Error("Circuit breaker did not open after repeated failures");
   }
 
   const saveConfigResponse = await fetch(baseUrl + "/api/config/provider", {
@@ -261,6 +333,7 @@ try {
         failedCalls: metrics.failedCalls,
         p95LatencyMs: metrics.p95LatencyMs,
         retryAttempts: providerTest.attempts,
+        circuitBreakerOpened: true,
         providerConfigPersisted: true,
         clientKeyEnforced: true,
         deterministicEvaluationWithoutKey: evaluation.passed,
@@ -272,4 +345,6 @@ try {
 } finally {
   child.kill();
   mockProvider.close();
+  failingPrimary.close();
+  fallbackProvider.close();
 }

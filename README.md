@@ -23,13 +23,16 @@
 - 本地 RAG：文档切块、BM25 + 向量混合检索、重排序、来源引用和角色知识隔离
 - 调用观测：成功率、延迟、Token/字符量与最近 300 条日志
 - 模型可靠性：自动重试、模型连通性测试和停止流式生成
+- Provider 熔断器、备用模型自动降级和请求 Trace
 - 长期记忆：模型提取候选、人工确认、去重和按问题相关性动态检索
 - 桌面端 AI 工作台：Agent、知识库、调用观测和工程评测
 - SQLite 持久化 RAG、知识块与调用日志
 - 无 Key 可用的本地演示模式
+- Zod 工具参数校验、Agent 超时和工具调用上限
+- PDF、DOCX、TXT、Markdown、CSV、JSON 文件知识库导入
 - Capacitor Android 工程与响应式 Web 应用
 
-架构与简历描述见 [docs/PORTFOLIO.md](docs/PORTFOLIO.md)，第一轮实测结果见 [docs/ROUND-1-RESULTS.md](docs/ROUND-1-RESULTS.md)。
+架构与简历描述见 [docs/PORTFOLIO.md](docs/PORTFOLIO.md)，实测结果见 [docs/ROUND-1-RESULTS.md](docs/ROUND-1-RESULTS.md) 和 [docs/ROUND-2-RESULTS.md](docs/ROUND-2-RESULTS.md)。
 
 ## 本地运行
 

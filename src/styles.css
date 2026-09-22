@@ -1961,7 +1961,8 @@ p {
 }
 
 .form-stack input,
-.form-stack textarea {
+.form-stack textarea,
+.settings-select {
   width: 100%;
   border: 1px solid #e3dedb;
   border-radius: 10px;
@@ -1969,9 +1970,14 @@ p {
   font-size: 12px;
 }
 
-.form-stack input {
+.form-stack input,
+.settings-select {
   height: 42px;
   padding: 0 12px;
+}
+
+.settings-select {
+  cursor: pointer;
 }
 
 .form-stack textarea {
@@ -3138,6 +3144,58 @@ p {
   background-size: 5px 5px, 5px 5px;
 }
 
+.file-dropzone {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 11px;
+  padding: 11px 12px;
+  border: 1px dashed #cfc8c4;
+  border-radius: 10px;
+  background: #faf8f6;
+  color: #6f6973;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.file-dropzone:hover,
+.file-dropzone:focus-visible {
+  border-color: var(--coral);
+  background: #fff7f4;
+}
+
+.file-dropzone > svg {
+  flex: 0 0 auto;
+  color: var(--coral);
+}
+
+.file-dropzone > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.file-dropzone strong {
+  font-size: 10px;
+}
+
+.file-dropzone small {
+  margin-top: 3px;
+  color: var(--faint);
+  font-size: 8px;
+}
+
+.file-dropzone input {
+  display: none;
+}
+
+.file-dropzone.is-loading {
+  cursor: wait;
+  opacity: 0.7;
+}
+
 .retrieval-results {
   display: flex;
   flex-direction: column;
@@ -3392,6 +3450,58 @@ p {
 .observability-grid strong {
   margin-top: 5px;
   font-size: 18px;
+}
+
+.circuit-list {
+  margin-top: 13px;
+  padding-top: 12px;
+  border-top: 1px solid #efebe8;
+}
+
+.circuit-list__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+
+.circuit-list__title span {
+  color: #57525c;
+  font-size: 10px;
+  font-weight: 780;
+}
+
+.circuit-list__title small,
+.circuit-list > p {
+  color: var(--faint);
+  font-size: 8px;
+}
+
+.circuit-list > div:not(:first-child) {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+}
+
+.circuit-list > div:not(:first-child) > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.circuit-list strong {
+  overflow: hidden;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.circuit-list small {
+  margin-top: 2px;
+  color: var(--faint);
+  font-size: 8px;
 }
 
 .lab-note {

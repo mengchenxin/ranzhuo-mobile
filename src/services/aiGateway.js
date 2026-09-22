@@ -112,8 +112,10 @@ export async function streamGatewayChat({
   temperature,
   messages,
   signal,
+  fallback,
   onDelta,
   onReasoning,
+  onStart,
   onDone,
 }) {
   const response = await fetch(normalizeBaseUrl(baseUrl) + "/api/chat/stream", {
@@ -129,6 +131,7 @@ export async function streamGatewayChat({
       model,
       temperature,
       messages,
+      fallback,
     }),
   });
 
@@ -157,6 +160,7 @@ export async function streamGatewayChat({
       }
       if (!data) continue;
       const payload = JSON.parse(data);
+      if (event === "start") onStart?.(payload);
       if (event === "delta") onDelta?.(payload.content || "");
       if (event === "reasoning") onReasoning?.(payload.content || "");
       if (event === "done") onDone?.(payload);

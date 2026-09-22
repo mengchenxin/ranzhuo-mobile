@@ -19,6 +19,15 @@ const providerDefaults = {
     model: "",
   },
 };
+const circuitStates = new Map();
+const circuitFailureThreshold = Math.max(
+  1,
+  Number(process.env.RANZHUO_CIRCUIT_FAILURE_THRESHOLD || 3),
+);
+const circuitCooldownMs = Math.max(
+  1000,
+  Number(process.env.RANZHUO_CIRCUIT_COOLDOWN_MS || 30_000),
+);
 
 function trimTrailingSlash(value) {
   return String(value || "").replace(/\/+$/, "");
@@ -94,6 +103,65 @@ async function fetchWithRetry(url, options, attempts = 3) {
   );
 }
 
+function providerKey(config) {
+  return [config.provider, config.baseUrl, config.model].join("|");
+}
+
+function getCircuit(config) {
+  const key = providerKey(config);
+  const current = circuitStates.get(key) || {
+    key,
+    provider: config.provider,
+    model: config.model,
+    failures: 0,
+    openUntil: 0,
+    lastError: "",
+    updatedAt: new Date().toISOString(),
+  };
+  circuitStates.set(key, current);
+  return current;
+}
+
+function circuitIsOpen(config) {
+  const circuit = getCircuit(config);
+  if (circuit.openUntil && circuit.openUntil > Date.now()) return true;
+  if (circuit.openUntil && circuit.openUntil <= Date.now()) {
+    circuit.openUntil = 0;
+    circuit.failures = 0;
+    circuit.updatedAt = new Date().toISOString();
+  }
+  return false;
+}
+
+function recordCircuitSuccess(config) {
+  const circuit = getCircuit(config);
+  circuit.failures = 0;
+  circuit.openUntil = 0;
+  circuit.lastError = "";
+  circuit.updatedAt = new Date().toISOString();
+}
+
+function recordCircuitFailure(config, error) {
+  const circuit = getCircuit(config);
+  circuit.failures += 1;
+  circuit.lastError = error.message;
+  circuit.updatedAt = new Date().toISOString();
+  if (circuit.failures >= circuitFailureThreshold) {
+    circuit.openUntil = Date.now() + circuitCooldownMs;
+  }
+}
+
+function shouldTryFallback(error) {
+  return error?.name !== "AbortError";
+}
+
+export function getCircuitStates() {
+  return Array.from(circuitStates.values()).map((circuit) => ({
+    ...circuit,
+    open: circuit.openUntil > Date.now(),
+  }));
+}
+
 export async function createChatCompletion({
   providerConfig,
   messages,
@@ -101,6 +169,7 @@ export async function createChatCompletion({
   toolChoice,
   temperature,
   maxTokens,
+  signal,
 }) {
   requireModel(providerConfig);
 
@@ -114,6 +183,7 @@ export async function createChatCompletion({
           ? { Authorization: "Bearer " + providerConfig.apiKey }
           : {}),
       },
+      signal,
       body: JSON.stringify({
         model: providerConfig.model,
         messages,
@@ -135,12 +205,58 @@ export async function createChatCompletion({
   };
 }
 
+export async function createChatCompletionResilient({
+  providerConfig,
+  fallbackProviderConfig,
+  ...options
+}) {
+  const candidates = [providerConfig, fallbackProviderConfig].filter(Boolean);
+  const errors = [];
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    if (circuitIsOpen(candidate)) {
+      errors.push(
+        new Error(`${candidate.provider}/${candidate.model} 熔断器已打开`),
+      );
+      continue;
+    }
+
+    try {
+      const payload = await createChatCompletion({
+        providerConfig: candidate,
+        ...options,
+      });
+      recordCircuitSuccess(candidate);
+      return {
+        ...payload,
+        gatewayMeta: {
+          ...(payload.gatewayMeta || {}),
+          provider: candidate.provider,
+          model: candidate.model,
+          fallbackUsed: index > 0,
+        },
+      };
+    } catch (error) {
+      recordCircuitFailure(candidate, error);
+      errors.push(error);
+      if (!shouldTryFallback(error)) throw error;
+    }
+  }
+
+  throw new Error(
+    "所有模型候选均失败：" +
+      errors.map((error) => error.message).join(" | "),
+  );
+}
+
 export async function streamChatCompletion({
   providerConfig,
   messages,
   temperature,
   onDelta,
   onReasoning,
+  signal,
 }) {
   requireModel(providerConfig);
 
@@ -155,6 +271,7 @@ export async function streamChatCompletion({
           ? { Authorization: "Bearer " + providerConfig.apiKey }
           : {}),
       },
+      signal,
       body: JSON.stringify({
         model: providerConfig.model,
         messages,
@@ -221,6 +338,53 @@ export async function streamChatCompletion({
     finishReason,
     attempts,
   };
+}
+
+export async function streamChatCompletionResilient({
+  providerConfig,
+  fallbackProviderConfig,
+  ...options
+}) {
+  const candidates = [providerConfig, fallbackProviderConfig].filter(Boolean);
+  const errors = [];
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    if (circuitIsOpen(candidate)) {
+      errors.push(
+        new Error(`${candidate.provider}/${candidate.model} 熔断器已打开`),
+      );
+      continue;
+    }
+
+    let emitted = false;
+    try {
+      const result = await streamChatCompletion({
+        ...options,
+        providerConfig: candidate,
+        onDelta(delta) {
+          emitted = true;
+          options.onDelta?.(delta);
+        },
+      });
+      recordCircuitSuccess(candidate);
+      return {
+        ...result,
+        provider: candidate.provider,
+        model: candidate.model,
+        fallbackUsed: index > 0,
+      };
+    } catch (error) {
+      recordCircuitFailure(candidate, error);
+      errors.push(error);
+      if (emitted || !shouldTryFallback(error)) throw error;
+    }
+  }
+
+  throw new Error(
+    "所有流式模型候选均失败：" +
+      errors.map((error) => error.message).join(" | "),
+  );
 }
 
 export async function testProviderConnection(providerConfig) {

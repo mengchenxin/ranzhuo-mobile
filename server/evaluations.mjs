@@ -235,6 +235,22 @@ export async function runEvaluationSuite({
   );
 
   cases.push(
+    await runCase("tool.schema.strict", "工具调用：拒绝额外参数", async () => {
+      let blocked = false;
+      try {
+        await executeTool("calculate", {
+          expression: "1 + 1",
+          unexpected: true,
+        });
+      } catch {
+        blocked = true;
+      }
+      assert(blocked, "工具必须拒绝 Schema 之外的字段");
+      return { blocked };
+    }),
+  );
+
+  cases.push(
     await runCase("tool.time.contract", "工具调用：时间返回结构", async () => {
       const result = await executeTool("get_current_time", {});
       assert(result.iso, "必须返回 ISO 时间");

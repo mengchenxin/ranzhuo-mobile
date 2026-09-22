@@ -44,6 +44,7 @@ import {
   Sparkles,
   Star,
   Trash2,
+  Upload,
   UserPlus,
   UsersRound,
   Video,
@@ -84,6 +85,10 @@ import {
   buildLocalDemoReply,
   selectRelevantMemories,
 } from "./services/memory";
+import {
+  extractFileText,
+  supportedFileTypes,
+} from "./services/fileExtraction";
 
 const runtimeGatewayUrl =
   import.meta.env.VITE_GATEWAY_URL ||
@@ -106,6 +111,11 @@ const defaultSettings = {
     model: "deepseek-flash",
     temperature: 0.85,
     demoMode: false,
+    fallbackEnabled: false,
+    fallbackProvider: "openai",
+    fallbackBaseUrl: "https://api.openai.com/v1",
+    fallbackModel: "gpt-4o-mini",
+    fallbackApiKey: "",
   },
   voice: {
     autoPlay: true,
@@ -432,6 +442,8 @@ function App() {
         let streamedText = "";
         let reasoningText = "";
         let assistantMessageId = null;
+        let traceId = null;
+        let fallbackUsed = false;
 
         const appendAssistantChunk = (chunk) => {
           streamedText += chunk;
@@ -446,6 +458,8 @@ function App() {
               citations,
               memoryUsed: relevantMemories,
               retrieval: retrievalMeta,
+              traceId,
+              fallbackUsed,
             });
             setTypingThreadId(null);
             return;
@@ -460,7 +474,13 @@ function App() {
                     updatedAt: formatNow(),
                     messages: item.messages.map((message) =>
                       message.id === assistantMessageId
-                        ? { ...message, text: streamedText, reasoning: reasoningText }
+                        ? {
+                            ...message,
+                            text: streamedText,
+                            reasoning: reasoningText,
+                            traceId,
+                            fallbackUsed,
+                          }
                         : message,
                     ),
                   }
@@ -478,9 +498,41 @@ function App() {
           temperature: api.temperature,
           messages: [systemMessage, ...conversation],
           signal: controller.signal,
+          fallback: {
+            enabled: api.fallbackEnabled,
+            provider: api.fallbackProvider,
+            baseUrl: api.fallbackBaseUrl,
+            model: api.fallbackModel,
+            apiKey: api.fallbackApiKey,
+          },
           onDelta: appendAssistantChunk,
+          onStart(payload) {
+            traceId = payload.traceId || null;
+          },
           onReasoning(chunk) {
             reasoningText += chunk;
+          },
+          onDone(payload) {
+            fallbackUsed = Boolean(payload.fallbackUsed);
+            if (!assistantMessageId) return;
+            setThreads((current) =>
+              current.map((item) =>
+                item.id === thread.id
+                  ? {
+                      ...item,
+                      messages: item.messages.map((message) =>
+                        message.id === assistantMessageId
+                          ? {
+                              ...message,
+                              traceId,
+                              fallbackUsed,
+                            }
+                          : message,
+                      ),
+                    }
+                  : item,
+              ),
+            );
           },
         });
 
@@ -1595,6 +1647,16 @@ function MessageBubble({ message, character, onPlay }) {
                 <BrainCircuit size={10} /> 使用 {message.memoryUsed.length} 条记忆
               </span>
             ) : null}
+            {message.traceId ? (
+              <span title={message.traceId}>
+                <Activity size={10} /> Trace {message.traceId.slice(0, 8)}
+              </span>
+            ) : null}
+            {message.fallbackUsed ? (
+              <span>
+                <Server size={10} /> 已自动降级
+              </span>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -1733,6 +1795,8 @@ function AILabSheet({ settings, characters, onClose, notify }) {
   const [evaluationRunning, setEvaluationRunning] = useState(false);
   const [documentTitle, setDocumentTitle] = useState("");
   const [documentText, setDocumentText] = useState("");
+  const [fileImporting, setFileImporting] = useState(false);
+  const fileInputRef = useRef(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [selectedAgentCharacterId, setSelectedAgentCharacterId] = useState(
@@ -1750,6 +1814,13 @@ function AILabSheet({ settings, characters, onClose, notify }) {
     apiKey: api.apiKey || "",
     model: api.model || "deepseek-flash",
     temperature: api.temperature,
+    fallback: {
+      enabled: api.fallbackEnabled,
+      provider: api.fallbackProvider,
+      baseUrl: api.fallbackBaseUrl,
+      model: api.fallbackModel,
+      apiKey: api.fallbackApiKey,
+    },
   };
   const selectedAgentCharacter =
     characters.find((character) => character.id === selectedAgentCharacterId) ||
@@ -1865,6 +1936,32 @@ function AILabSheet({ settings, characters, onClose, notify }) {
       notify("入库失败：" + error.message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const importFile = async (file) => {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      notify("文件不能超过 10 MB");
+      return;
+    }
+
+    setFileImporting(true);
+    try {
+      const extracted = await extractFileText(file);
+      if (!extracted.text.trim()) {
+        throw new Error("没有从文件中提取到文本");
+      }
+      setDocumentTitle(file.name.replace(/\.[^.]+$/, ""));
+      setDocumentText(extracted.text);
+      notify(
+        "文件解析完成，共 " + extracted.text.length + " 字符，请确认后建立索引",
+      );
+    } catch (error) {
+      notify("文件解析失败：" + error.message);
+    } finally {
+      setFileImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -2111,6 +2208,38 @@ function AILabSheet({ settings, characters, onClose, notify }) {
                 placeholder="例如：项目技术说明"
               />
             </label>
+            <div
+              className={
+                "file-dropzone " + (fileImporting ? "is-loading" : "")
+              }
+              role="button"
+              tabIndex={0}
+              onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  fileInputRef.current?.click();
+                }
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                importFile(event.dataTransfer.files?.[0]);
+              }}
+            >
+              <Upload size={20} />
+              <span>
+                <strong>
+                  {fileImporting ? "正在解析文件..." : "拖入或选择文件"}
+                </strong>
+                <small>支持 PDF、DOCX、TXT、Markdown、CSV、JSON</small>
+              </span>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={supportedFileTypes}
+                onChange={(event) => importFile(event.target.files?.[0])}
+              />
+            </div>
             <label className="lab-field">
               <span>正文内容</span>
               <textarea
@@ -2340,6 +2469,39 @@ function AILabSheet({ settings, characters, onClose, notify }) {
                 </strong>
               </div>
             </div>
+            <div className="circuit-list">
+              <div className="circuit-list__title">
+                <span>Provider Circuits</span>
+                <small>
+                  {health?.circuits?.length
+                    ? health.circuits.length + " 个状态"
+                    : "全部未触发"}
+                </small>
+              </div>
+              {health?.circuits?.length ? (
+                health.circuits.map((circuit) => (
+                  <div key={circuit.key}>
+                    <span
+                      className={
+                        "call-status " +
+                        (circuit.open ? "call-status--error" : "")
+                      }
+                    />
+                    <span>
+                      <strong>
+                        {circuit.provider}/{circuit.model}
+                      </strong>
+                      <small>
+                        连续失败 {circuit.failures} 次
+                        {circuit.open ? " · 已熔断" : " · 正常"}
+                      </small>
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <p>当前没有 Provider 失败记录。</p>
+              )}
+            </div>
             <div className="lab-note">
               <ShieldCheck size={17} />
               <p>
@@ -2451,7 +2613,7 @@ function AILabSheet({ settings, characters, onClose, notify }) {
               <small>
                 {evaluationResult
                   ? evaluationResult.durationMs + "ms"
-                  : "16 个确定性用例 + 3 个模型用例"}
+                  : "17 个确定性用例 + 3 个模型用例"}
               </small>
             </div>
             {evaluationResult?.cases?.length ? (
@@ -2821,6 +2983,81 @@ function SettingsSheet({ settings, onClose, onSave }) {
           </div>
         ) : null}
       </div>
+
+      <div className="form-section-title">备用模型与熔断</div>
+      <label className="toggle-row">
+        <span>
+          <strong>启用自动降级</strong>
+          <small>主模型失败且尚未输出内容时，自动切换备用模型</small>
+        </span>
+        <input
+          type="checkbox"
+          checked={draft.api.fallbackEnabled}
+          onChange={(event) =>
+            updateApi({ fallbackEnabled: event.target.checked })
+          }
+        />
+        <i />
+      </label>
+      {draft.api.fallbackEnabled ? (
+        <div className="form-stack">
+          <label>
+            <span>备用供应商</span>
+            <select
+              className="settings-select"
+              value={draft.api.fallbackProvider}
+              onChange={(event) => {
+                const preset = providerPresets.find(
+                  (item) => item.id === event.target.value,
+                );
+                updateApi({
+                  fallbackProvider: event.target.value,
+                  fallbackBaseUrl: preset?.baseUrl || "",
+                  fallbackModel: preset?.model || "",
+                });
+              }}
+            >
+              {providerPresets.map((preset) => (
+                <option value={preset.id} key={preset.id}>
+                  {preset.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>备用服务地址</span>
+            <input
+              value={draft.api.fallbackBaseUrl}
+              onChange={(event) =>
+                updateApi({ fallbackBaseUrl: event.target.value })
+              }
+              autoCapitalize="none"
+            />
+          </label>
+          <label>
+            <span>备用模型</span>
+            <input
+              value={draft.api.fallbackModel}
+              onChange={(event) =>
+                updateApi({ fallbackModel: event.target.value })
+              }
+              autoCapitalize="none"
+            />
+          </label>
+          <label>
+            <span>备用 API 密钥</span>
+            <input
+              type="password"
+              value={draft.api.fallbackApiKey}
+              onChange={(event) =>
+                updateApi({ fallbackApiKey: event.target.value })
+              }
+              placeholder="如果与主模型相同可留空"
+              autoCapitalize="none"
+            />
+          </label>
+        </div>
+      ) : null}
 
       <div className="privacy-note">
         <ShieldCheck size={18} />

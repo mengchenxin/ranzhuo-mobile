@@ -24,8 +24,11 @@
     "@capacitor/android": "^8.5.2",
     "@capacitor/core": "^8.5.2",
     "lucide-react": "^1.47.0",
+    "mammoth": "^1.12.3",
+    "pdfjs-dist": "^6.3.289",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.2",

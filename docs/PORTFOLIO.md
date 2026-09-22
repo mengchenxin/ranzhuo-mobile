@@ -31,6 +31,8 @@ Ranzhuo AI Gateway (Node.js, 127.0.0.1)
         |     +-- search_knowledge
         |     +-- calculate
         |     +-- get_current_time
+        |     +-- Zod argument validation
+        |     +-- timeout and cancellation
         |
         +-- Local RAG
         |     +-- Document chunking
@@ -44,6 +46,8 @@ Ranzhuo AI Gateway (Node.js, 127.0.0.1)
               +-- Token usage
               +-- Tool trace
               +-- Golden-set evaluation
+              +-- Request trace IDs
+              +-- Provider circuit breaker
 
         +-- SQLite persistence
               +-- Documents and chunks
@@ -96,6 +100,15 @@ Provider 层对 429、5xx 和网络错误执行指数退避重试，并记录实
 
 模型不会直接改写角色记忆。应用先从最近会话中提取结构化候选，展示类型、重要度和置信度，再由用户确认、去重后写入角色长期记忆。
 
+### 8. 生产可靠性
+
+- 主模型失败后在未产生增量输出时自动切换备用模型
+- 连续失败达到阈值后打开 Provider 熔断器，冷却后自动恢复探测
+- Agent 工具参数经过 Zod Schema 严格校验
+- Agent 支持执行超时、工具调用上限和取消信号
+- 聊天请求返回 Trace ID，并在消息来源区域展示
+- 知识库支持 PDF、DOCX、TXT、Markdown、CSV 和 JSON 文件导入
+
 ## 可以写进简历的项目描述
 
 > 基于 React、Capacitor 与 Node.js 设计 Local First AI Roleplay 应用，构建统一模型网关，支持 DeepSeek、OpenAI、Ollama 等接口的 SSE 流式对话；实现工具调用 Agent、本地 RAG、角色长期记忆与调用链路观测，解决第三方 API CORS、多供应商协议差异和角色上下文一致性问题。
@@ -107,7 +120,7 @@ Provider 层对 429、5xx 和网络错误执行指数退避重试，并记录实
 - 构建 Local First RAG 流程，完成文档切块、可配置 Embedding、BM25 + 向量混合检索、重排序、来源引用和角色级知识隔离。
 - 实现角色上下文组装、长期记忆抽取和相关性检索，将角色设定、知识检索结果和当前问题需要的记忆动态注入模型输入。
 - 建立调用观测面板，统计成功率、延迟、Token/字符量和接口状态，并保留最近 300 条无敏感正文的调用日志。
-- 构建 17 项确定性 AI 工程评测套件，覆盖 Tool Calling、RAG Hit@3、MRR、关键词覆盖和真实模型连通性；当前 Hit@3 与 MRR 均为 100%。
+- 构建 18 项确定性 AI 工程评测套件，覆盖 Tool Calling、Schema 校验、RAG Hit@3、MRR、关键词覆盖和真实模型连通性；当前 Hit@3 与 MRR 均为 100%。
 - 为 Provider 层增加指数退避重试、停止生成和 SQLite 调用日志持久化，并提供无需额外 Token 的本地演示模式。
 - 使用 React、Vite 与 Capacitor 构建移动端优先、桌面端增强的跨端应用，Android 原生工程可同步运行。
 

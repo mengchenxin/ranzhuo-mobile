@@ -11,6 +11,8 @@ const dataDir = path.resolve(
 const databasePath = path.join(dataDir, "ranzhuo.sqlite");
 
 let database;
+let initializationPromise;
+let writeQueue = Promise.resolve();
 
 function getDatabase() {
   if (database) return database;
@@ -70,11 +72,22 @@ function ensureColumn(db, table, column, type) {
   }
 }
 
-export async function initDatabase() {
-  await mkdir(dataDir, { recursive: true });
-  const db = getDatabase();
-  await migrateLegacyJson(db);
-  return db;
+export function initDatabase() {
+  if (!initializationPromise) {
+    initializationPromise = (async () => {
+      await mkdir(dataDir, { recursive: true });
+      const db = getDatabase();
+      await migrateLegacyJson(db);
+      return db;
+    })();
+  }
+  return initializationPromise;
+}
+
+function enqueueWrite(task) {
+  const next = writeQueue.catch(() => {}).then(task);
+  writeQueue = next;
+  return next;
 }
 
 async function migrateLegacyJson(db) {
@@ -152,8 +165,10 @@ function insertDocumentIntoDatabase(document) {
 }
 
 export async function insertDocument(document) {
-  await initDatabase();
-  insertDocumentIntoDatabase(document);
+  return enqueueWrite(async () => {
+    await initDatabase();
+    insertDocumentIntoDatabase(document);
+  });
 }
 
 export async function getDocuments() {
@@ -180,10 +195,12 @@ export async function getDocuments() {
 
 export async function removeDocument(documentId) {
   const db = await initDatabase();
-  const result = db
-    .prepare("DELETE FROM documents WHERE id = ?")
-    .run(documentId);
-  return result.changes > 0;
+  return enqueueWrite(() => {
+    const result = db
+      .prepare("DELETE FROM documents WHERE id = ?")
+      .run(documentId);
+    return result.changes > 0;
+  });
 }
 
 export async function getChunks(characterId) {
@@ -272,8 +289,10 @@ function appendDatabaseCallLog(entry) {
 }
 
 export async function insertCallLog(entry) {
-  await initDatabase();
-  appendDatabaseCallLog(entry);
+  return enqueueWrite(async () => {
+    await initDatabase();
+    appendDatabaseCallLog(entry);
+  });
 }
 
 function deserializeCallLog(row) {
